@@ -573,12 +573,12 @@ python main.py --usage                                        # LLM 调用统计
 
 ### 18.5 D 阶段工程补强(穿插,各 0.5 天)
 
-| 项 | 内容 | 对应标准 |
-|---|---|---|
-| D1 LLM eval 黄金集 | 20-30 例 rubric:讲解不含答案/诊断 JSON 可解析/报告数字与库一致/输出无有害内容;每次 prompt/模型变更跑,回归回滚 | 17.2 Evals |
-| D2 Playwright E2E | 6 步闭环冒烟(注册→前测→诊断→费曼→后测→报告),mock LLM | 17.1 前端零测试作废 |
-| D3 prompt 版本化 | system prompt 移入 prompts/,git 可 diff | 17.2 版本控制 |
-| D4 session trace | llm_logs 加 session_id,一次闭环可回放 | 17.2 可观测性 |
+| 项 | 内容 | 对应标准 | 状态 |
+|---|---|---|---|
+| D1 LLM eval 黄金集 | 20-30 例 rubric:讲解不含答案/诊断 JSON 可解析/报告数字与库一致/输出无有害内容;每次 prompt/模型变更跑,回归回滚 | 17.2 Evals | ✅ 2026-08-23: scripts/eval_llm.py(check 免费 CI + live 按需)+ evals/golden/outputs.jsonl 9 例 + tests/test_llm_eval_deterministic.py(3 测试);live 实测 7/7 过 |
+| D2 Playwright E2E | 6 步闭环冒烟(注册→前测→诊断→费曼→后测→报告),mock LLM | 17.1 前端零测试作废 | 🔄 scripts/e2e_server.py(mock LLM)+ scripts/e2e_flow.py 已写,chromium 下载后验证 |
+| D3 prompt 版本化 | system prompt 移入 prompts/,git 可 diff | 17.2 版本控制 | ✅ 2026-08-23: prompts.py + prompts/{diagnostic,feynman_system,feynman_followup,feynman_gaps,feynman_hint,planner,recommender,rag_filter}.md,5 个 agent 改引用 |
+| D4 session trace | llm_logs 加 session_id,一次闭环可回放 | 17.2 可观测性 | ✅ 2026-08-23: llm_logs.session_id 迁移 + model contextvar + web 层设置,测试断言覆盖 |
 
 ### 18.6 砍掉(别犹豫)
 

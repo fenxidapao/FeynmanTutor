@@ -15,43 +15,10 @@ from typing import Callable
 
 import db
 import model
+import prompts
 import rag
 
-FEYNMAN_SYSTEM = """你是费曼学习法教练。核心规则：
-1. 用户当老师讲解概念，你当学生提问——通过追问暴露用户的认知盲点；
-2. 用户讲得对就肯定并深入问细节；讲错/含糊就指出并引导；
-3. 每轮只问 1-2 个尖锐问题，问题要具体（举例、边界、易错点）；
-4. 禁止直接给出完整答案，禁止替用户讲解。
-"""
-
-FOLLOWUP_PROMPT = """你是费曼学习法教练，正在听学生（老师）讲解知识点：{kp_title}。
-
-已有对话：
-{transcript}
-
-现在轮到你提问/回应：
-1. 若学生讲得对 → 肯定，然后问一个更深入的细节问题（边界情况/易错点/举例）；
-2. 若学生讲错或含糊 → 直接指出哪里有问题，引导 TA 纠正；
-3. 只输出你的话（1-2 句话），不要输出别的。
-"""
-
-GAP_PROMPT = """以下是学生（老师）讲解知识点 {kp_title} 的完整对话。请总结学生的认知盲点。
-
-对话记录：
-{transcript}
-
-输出严格 JSON：{{"gaps": ["盲点1", "盲点2", ...]}}
-最多 3 个，具体到概念细节。只总结真实出现的盲点，不要编造。"""
-
-HINT_PROMPT = """学生做编程题答错了。题目：{prompt}
-学生的错误答案：{answer}
-判题反馈：{feedback}
-
-你的任务：只给"方向性提示"帮助 TA 自己找到错误。
-规则：
-1. 提示必须具体到知识点层面（如"想想切片索引从几开始"），不能直接给出正确答案代码；
-2. 不超过 2 句话；
-3. 不要说"你错了"这类空话，直接指出该检查哪里。"""
+# 费曼各环节 prompt 已版本化：prompts/feynman_*.md（D3，PLAN 17.2）
 
 
 def _load_graph(course: str) -> dict:
@@ -96,8 +63,8 @@ def generate_followup(kp: dict, transcript: list[dict]) -> str:
     lines = "\n".join(f"{'学生' if t['role'] == 'user' else '教练'}: {t['content']}"
                       for t in transcript)
     raw = model.chat(
-        [{"role": "system", "content": FEYNMAN_SYSTEM},
-         {"role": "user", "content": FOLLOWUP_PROMPT.format(
+        [{"role": "system", "content": prompts.load("feynman_system.md")},
+         {"role": "user", "content": prompts.load("feynman_followup.md").format(
              kp_title=kp.get("title", kp["kp_id"]), transcript=lines or "（刚开始）")}],
         temperature=0.4, max_tokens=500, caller="feynman_followup",
     )
@@ -113,7 +80,7 @@ def summarize_gaps(kp: dict, transcript: list[dict]) -> list[str]:
     try:
         raw = model.chat(
             [{"role": "system", "content": "你只输出合法 JSON。"},
-             {"role": "user", "content": GAP_PROMPT.format(
+             {"role": "user", "content": prompts.load("feynman_gaps.md").format(
                  kp_title=kp.get("title", kp["kp_id"]), transcript=lines)}],
             temperature=0.2, max_tokens=800, caller="feynman_gaps",
         )
@@ -176,7 +143,7 @@ def hint_only(exercise: dict, result: dict) -> str:
     try:
         raw = model.chat(
             [{"role": "system", "content": "你是耐心的编程助教，只给方向提示不给答案。"},
-             {"role": "user", "content": HINT_PROMPT.format(
+             {"role": "user", "content": prompts.load("feynman_hint.md").format(
                  prompt=prompt, answer=answer, feedback=feedback)}],
             temperature=0.3, max_tokens=300, caller="hint",
         )

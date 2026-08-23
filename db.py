@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS llm_logs (
   expanded INTEGER,           -- 是否发生推理预算扩容
   source TEXT,                -- api / ollama
   user_id TEXT,               -- 发起用户（C 阶段配额按用户计费）
+  session_id TEXT,            -- 发起会话（D4 session trace：一次闭环可回放）
   created_at TEXT
 );
 
@@ -123,6 +124,8 @@ def init_db(db_path: str | None = None) -> None:
         lcols = {r[1] for r in c.execute("PRAGMA table_info(llm_logs)")}
         if "user_id" not in lcols:
             c.execute("ALTER TABLE llm_logs ADD COLUMN user_id TEXT")
+        if "session_id" not in lcols:
+            c.execute("ALTER TABLE llm_logs ADD COLUMN session_id TEXT")
 
 
 def get_user(user_id: str, name: str | None = None, db_path: str | None = None) -> dict:
@@ -531,18 +534,19 @@ def log_llm_call(caller: str, model: str, prompt_tokens: int,
                  completion_tokens: int, total_tokens: int, latency_ms: int,
                  attempts: int = 1, expanded: bool = False,
                  source: str = "api", user_id: str | None = None,
+                 session_id: str | None = None,
                  db_path: str | None = None) -> None:
     """记录一次 LLM 调用（可观测性：token 用量 + 耗时，PLAN 8 多 Agent 效率评估）。
 
-    user_id 由 model 层 hook 自动附带（C 阶段配额按用户计费，PLAN 18.3）。
+    user_id/session_id 由 model 层 hook 自动附带（配额计费 + D4 session trace）。
     """
     with _conn(db_path) as c:
         c.execute(
             "INSERT INTO llm_logs (caller, model, prompt_tokens, completion_tokens, "
-            "total_tokens, latency_ms, attempts, expanded, source, user_id, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "total_tokens, latency_ms, attempts, expanded, source, user_id, "
+            "session_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (caller, model, prompt_tokens, completion_tokens, total_tokens,
-             latency_ms, attempts, int(expanded), source, user_id,
+             latency_ms, attempts, int(expanded), source, user_id, session_id,
              datetime.now().isoformat(timespec="seconds")),
         )
 

@@ -64,10 +64,14 @@ def test_quota_count():
     uid = new_uid()
     db.register_user(uid, "pass123")
     assert db.today_usage(uid) == 0
-    db.log_llm_call("test", "m", 10, 10, 20, 5, user_id=uid)
+    db.log_llm_call("test", "m", 10, 10, 20, 5, user_id=uid, session_id="sess_abc")
     assert db.today_usage(uid) == 1
     exceeded, _ = db.quota_exceeded(uid)
     assert exceeded is False  # 1 < 50 上限
+    # D4 session trace：session_id 落库可回放
+    with db._conn() as c:
+        row = c.execute("SELECT session_id FROM llm_logs ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["session_id"] == "sess_abc"
 
 
 # ==================== API 层 ====================

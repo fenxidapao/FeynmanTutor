@@ -16,20 +16,9 @@ import urllib.request
 import config
 import learning_pack
 import model
+import prompts
 
-# 讲解与"相关性过滤"合并为一次 LLM 调用：让它只基于相关片段讲解，并声明引用了哪些
-FILTER_PROMPT = """你是编程教学助手。下面是检索到的课程片段（可能包含无关内容）。
-用户要学知识点：{kp_title}（{kp_id}）
-
-规则：
-1. 只使用与知识点直接相关的片段来组织讲解，忽略无关片段；
-2. 输出格式（严格 JSON）：
-   {{"used": [片段编号列表，如 [0,2]], "explanation": "基于相关片段的讲解（类比+要点+示例），300字以内"}}
-3. 如果所有片段都不相关，输出 {{"used": [], "explanation": ""}}，不要硬编。
-
-片段列表：
-{docs}
-"""
+# 讲解与"相关性过滤"合并为一次 LLM 调用（prompt 已版本化：prompts/rag_filter.md，D3）
 
 
 class RAGError(Exception):
@@ -60,7 +49,7 @@ def _llm_filter(kp: dict, docs: list[dict]) -> tuple[list[int], str]:
         f"[{i}] (来源:{d.get('source', '?')})\n{d.get('content', '')[:800]}"
         for i, d in enumerate(docs)
     )
-    prompt = FILTER_PROMPT.format(
+    prompt = prompts.load("rag_filter.md").format(
         kp_title=kp.get("title", kp["kp_id"]),
         kp_id=kp["kp_id"],
         docs=doc_text,

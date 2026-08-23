@@ -71,10 +71,11 @@ def _check_quota(user_id: str) -> None:
 
 
 def _start_req(session_id: str | None, user_id: str) -> str:
-    """业务端点统一入口：鉴权 + 标记当前用户（hook 计费用）。返回有效 user_id。"""
+    """业务端点统一入口：鉴权 + 标记当前用户/会话（hook 计费 + session trace）。返回有效 user_id。"""
     uid = _require_auth(session_id, user_id)
     _check_quota(uid)
     model.set_current_user(uid)
+    model.set_current_session(session_id)
     return uid
 
 
@@ -363,6 +364,7 @@ def api_heatmap(user_id: str, session_id: str = Query(None)):
     else:
         uid = user_id
     model.set_current_user(uid)
+    model.set_current_session(session_id)
     graph = learning_pack.load_graph()
     kps = db.list_kps(user_id)
     by_id = {k["kp_id"]: k for k in kps}

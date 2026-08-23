@@ -27,6 +27,8 @@ LOG_HOOK = None
 
 # 当前请求用户（Web 层设置，hook 落库带 user_id 供配额计费，PLAN 18.3）
 _CURRENT_USER = contextvars.ContextVar("ft_current_user", default=None)
+# 当前请求会话（D4 session trace：一次闭环可回放，PLAN 18.5）
+_CURRENT_SESSION = contextvars.ContextVar("ft_current_session", default=None)
 
 
 def set_current_user(user_id: str | None) -> None:
@@ -36,6 +38,15 @@ def set_current_user(user_id: str | None) -> None:
 
 def get_current_user() -> str | None:
     return _CURRENT_USER.get()
+
+
+def set_current_session(session_id: str | None) -> None:
+    """设置本次请求的会话（session trace 用）。None 清除。"""
+    _CURRENT_SESSION.set(session_id)
+
+
+def get_current_session() -> str | None:
+    return _CURRENT_SESSION.get()
 
 
 def set_log_hook(fn) -> None:
@@ -234,6 +245,7 @@ def _fire_hook(caller: str, usage: dict, latency_ms: int,
             expanded=expanded,
             source=source,
             user_id=_CURRENT_USER.get(),
+            session_id=_CURRENT_SESSION.get(),
         )
     except Exception as e:  # 日志失败绝不影响主流程
         print(f"[!] LLM 日志写入失败（忽略）: {type(e).__name__}: {e}")

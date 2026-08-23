@@ -14,14 +14,9 @@ import json
 import db
 import learning_pack
 import model
+import prompts
 
-REC_PROMPT = """你是习题推荐助手。学生薄弱点：{weak}（含标题对照：{titles}）。
-系统已按规则选出练习题（ex_id: kp_id 对照）：
-{items}
-
-请为每一道题输出一句推荐理由（为什么这道题能补这个薄弱点），
-格式严格 JSON：{{"reasons": {{"ex_id": "理由", ...}}}}
-只输出 JSON。"""
+# 推荐 prompt 已版本化：prompts/recommender.md（D3，PLAN 17.2）
 
 
 def _load_attempt_map(user_id: str, db_path: str | None) -> dict[str, dict]:
@@ -114,7 +109,7 @@ def _reasons(weak: list[str], titles: dict[str, str], picked: list[dict]) -> dic
     try:
         raw = model.chat(
             [{"role": "system", "content": "你只输出合法 JSON。"},
-             {"role": "user", "content": REC_PROMPT.format(
+             {"role": "user", "content": prompts.load("recommender.md").format(
                  weak=", ".join(titles.get(w, w) for w in weak[:5]),
                  titles=json.dumps(titles, ensure_ascii=False),
                  items=items)}],

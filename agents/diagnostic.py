@@ -8,25 +8,9 @@ import json
 
 import db
 import model
+import prompts
 
-DIAGNOSE_PROMPT = """你是学习诊断专家。根据学生的学习数据生成学习画像。
-
-学生答题记录（JSON 列表，每项包含 kp_id、ex_id、correct(0/1)、feedback 等字段）：
-{logs}
-
-历史画像（可能为空）：
-{old_profile}
-
-输出严格 JSON（不要多余文字）：
-{{
-  "weak_points": [
-    {{"kp_id": "知识点id", "reason": "为什么判定薄弱（一句话，引用数据）", "evidence": ["做错的题目ex_id", ...]}}
-  ],
-  "learning_style": "简答|代码|类比",
-  "avg_correct": 0.6
-}}
-weak_points 最多 5 个，按薄弱程度排序；evidence 只列真实做错的题目 id，不要编造。
-只依据给定数据，不要编造。"""
+# 诊断 prompt 已版本化：prompts/diagnostic.md（D3，PLAN 17.2）
 
 
 def _stats_fallback(logs: list[dict]) -> dict:
@@ -76,7 +60,7 @@ def diagnose(user_id: str, db_path: str | None = None) -> dict:
     try:
         raw = model.chat(
             [{"role": "system", "content": "你只输出合法 JSON。"},
-             {"role": "user", "content": DIAGNOSE_PROMPT.format(logs=summary, old_profile=old_summary)}],
+             {"role": "user", "content": prompts.load("diagnostic.md").format(logs=summary, old_profile=old_summary)}],
             temperature=0.2, max_tokens=1200, caller="diagnostic",
         )
         start, end = raw.find("{"), raw.rfind("}")
