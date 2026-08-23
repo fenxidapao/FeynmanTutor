@@ -1,7 +1,7 @@
 # FeynmanTutor(费曼导师)——项目计划书
 
 > **定位**:基于费曼学习法的个性化学习 Agent 系统  
-> **状态**:v2.0(2026-08-22 23:03,多用户兼容 + 语料策略 + 开工手册)  
+> **状态**:v2.1(2026-08-23 23:11,**拒绝简历 ROI 决策标准 + 生产级落地标准 + C 阶段实施方案 + Docker 部署**)  
 > **配套文档**:docs/REFERENCE.md(参考项目库,抄什么看这个)  
 > **一句话**:你当老师讲,Agent 追问找盲点;系统建学习画像、定专属路径,沙箱判题给硬反馈,前测/后测证明学习效果。
 
@@ -9,6 +9,7 @@
 
 ## 0. 开新窗口须知(先读这段)
 
+- **0.0 决策标准(v2.1 定稿,2026-08-23)**:**拒绝"简历 ROI"决策标准**。一切取舍以"真实落地、真实用户、工程质量"为准——功能做不做看它对"同学能用、数据可信、系统可靠"的贡献,不看"面试能否加分"。简历是结果的叙事,不是决策的输入。历史文档中"部署无简历增量先不做""预算熔断/语义缓存=过度工程,简历够用"等表述**全部作废**,修订明细见第 17.1 节。
 - **我的需求(用户)**:要一个**写入简历的、真实落地的 AI Agent 项目**,不是玩具。业务场景:辅助学习编程与 AI 基础(我本人是 0 号用户,要学 Python/SQL/TypeScript/AI 基础)。必须有真实用户需求、真实效果评估、完整工程结构。**落地后可给同学用、可发网上给别人用(多用户)**。
 - **我有什么**:两个已完成项目——CourseRAG(垂直 RAG,993 块课程语料,检索能力)+ deep-research-agent(LangGraph 三节点 Agent 编排,91 测试全绿)。都是真实跑通、有评测、有 Docker 的。FeynmanTutor 站在它们肩膀上,不重复造轮子。
 - **注意什么**:
@@ -280,6 +281,8 @@ $ python main.py --learn python --user u0
 5. **为什么 P0 只做 3 个 Agent**:数据量小,规划/推荐没有画像支撑是空转;先跑通闭环拿真实数据,P1 再上(P0 克制是原则,不是能力不足);
 6. **为什么一上来就多用户**:单人改多用户是出了名的返工重灾区(所有 SQL 加 user_id);P0 就从第一行代码按多用户写,落地分享零成本;
 7. **成本**:全 API(deepseek-v4-flash)为主,P0 全程约 1-3 元,可忽略;不用本地省这个钱(本地 7B 会降智,尤其费曼追问环节)。
+8. **为什么部署/鉴权/配额是必做(v2.1 推翻旧决策)**:旧判断"部署无简历增量先不做、预算熔断=过度工程"是简历 ROI 决策,已作废(见 17.1)。真实落地 = 同学能访问(部署)+ 不会刷爆你的 key(配额)+ 不会看到彼此数据(鉴权/会话隔离)。部署走 Docker(本机已有 29.7.2 + Compose v5.4.0)+ SQLite 卷挂载持久化,半天工作量,不是负担(第 19 节)。
+9. **为什么实验设计文档比拉人更重要**:单人对照失败的教训(天花板 + 难度差 + 顺序偏差三重污染)证明:没有预注册假设、排除标准、流失/作弊检测的数据,拉再多人都不可信。C 阶段**先写 docs/EXPERIMENT.md 再拉人**(第 18.3 节)。
 
 ## 11. 风险与对策
 
@@ -451,8 +454,9 @@ python main.py --report python --user u0         # 出效果报告
 - [x] P2:间隔复习闭环(SM-2 简化,--review)+ SQL 学习包(12 知识点/40 规则题/前后测各 10,sqlite3 判题器)已完成,62 测试全绿;TS 学习包/爬语料待做(按需)。
 - [x] **B 阶段(2026-08-23 下午)**:报告前后测对比柱状图 + 可检查记忆(weak_points 带证据链) + 掌握门槛(blocked) + Python 包 40 题补 explanation + 薄弱点按章节过滤——66 测试全绿,详见 HANDOVER-2026-08-23-B.md
 - [x] **可观测性(2026-08-23 傍晚)**:LLM 调用日志(llm_logs 表 + `--usage` 命令,按环节聚合 token/耗时)——PLAN 8"多 Agent 效率"评估项落地;GitHub 发布(fenxidapao/FeynmanTutor);前端 weak_points 渲染修复——66 测试全绿,详见 HANDOVER-2026-08-23-B.md
-- [ ] **C 阶段(下一窗口主线)**:Web 多人对照实验——前端按 group_name 自动定 mode(当前 app.js 硬编码 feynman),拉不熟 Python 的同学 n≥10,组间对比出"费曼 vs 讲解"数据
-- [ ] **低优先(按需)**:贡献热力图(1.5,观感项) / TS 学习包(node 沙箱,性价比最低) / 爬合规语料(廖雪峰更多章节、Python 官方文档中文版 PSF) / 部署(Render/Railway,无简历增量先不做) / vision-exp(按需)
+- [~] **C 阶段(进行中)**:C0 地基 ✅（requirements/.env.example/.dockerignore/Dockerfile/compose/CI/health 端点）+ C1 实验工程化 ✅（注册登录/session 隔离/每日配额+全局熔断/mode 服务端强制/EXPERIMENT.md/analyze_experiment.py/答题耗时作弊检测）——73 测试全绿（66+7），2026-08-23 晚落地；**剩余 C2：拉不熟 Python 同学 n≥20 分两批**（先 10 人验证流程再补到 20）
+- [ ] **D 阶段(工程补强,穿插 C 阶段)**:LLM eval 黄金集(第 17.3 节 rubric)/ Playwright E2E / prompt 版本化 / session trace——各 0.5 天
+- [ ] **低优先(按需)**:贡献热力图(观感) / TS 学习包(用户未学 TS,node 沙箱新机制) / 爬合规语料(廖雪峰更多章节、Python 官方文档中文版 PSF,现有 notes 够用则不做) / vision-exp(有下线风险,仅需看图时启用)
 
 ### 交接文档(2026-08-23 新增,新窗口必读)
 - **docs/HANDOVER-2026-08-23.md**:完整交接——保留建议/可选项/已完成/踩坑/方向性建议/开工清单
@@ -480,4 +484,138 @@ python main.py --review python --user u0                      # 间隔复习
 python main.py --usage                                        # LLM 调用统计(token/耗时,可观测性)
 
 # 4. Git 提交(SSH 免密):git add -A && git commit -m "..." && git push origin main
+
+---
+
+## 17. 生产级落地标准与现状差距(v2.1,2026-08-23 行业调研)
+
+### 17.1 决策标准修订:作废清单
+
+| 旧决策(简历 ROI) | 处置 | 新决策(落地导向) |
+|---|---|---|
+| 部署无简历增量先不做 | **作废** | 部署是落地前提,走 Docker(第 19 节),半天工作量 |
+| 预算熔断=过度工程,简历够用 | **部分作废** | **每用户每日配额升级为必做**(防同学刷 key,~30 行);语义缓存/Schema 强约束仍不做,理由改为"单机教学场景收益低",非简历导向 |
+| P0 克制是原则 | 保留 | 克制≠简历导向,是避免为架构而架构 |
+| 前端零测试可接受 | **作废** | Web 是真实用户唯一入口,必须补 E2E(B2) |
+
+### 17.2 行业标准 8 域 → 现状差距
+
+> 来源:MindStudio / agentmelt / scalemind / baeseokjae / ICMD 2026 生产级 agent checklist(本窗口爬取核实)
+
+| 域 | 要求 | 现状 | 差距→行动 |
+|---|---|---|---|
+| 模型/Prompt 版本控制 | pin 模型版本,prompt 进 git,升级当部署 | 模型名写死,prompt 散在 agent 代码 | D:prompt 移入 prompts/ 可 diff |
+| Guardrails 三层 | 输入/输出/动作级最小权限 | 动作级强(沙箱 5s/64KB/临时目录+规则判题) | C1:API 层输入校验 |
+| 预算上限 | per-user/per-day/全局熔断 | 仅单次 max_tokens + 402 预警 | C1:每用户每日配额 + 全局熔断 |
+| 可观测性 | step-level trace 可回放 | llm_logs 表 + --usage ✅ | D:llm_logs 加 session_id |
+| Evals | 黄金集 20-30 例 + 回归门禁 | 66 单元/集成测试,零 LLM 输出评估 | D:LLM eval 黄金集(rubric) |
+| 多用户安全 | 鉴权/会话隔离/防注入 | 表结构带 user_id ✅,无鉴权 | C1:注册登录 + session 隔离 |
+| 部署/回滚/降级 | 可复现/可回滚/降级路径 | 重试+空输出兜底 ✅,无部署 | C0:Docker + 卷挂载 |
+| RAG 治理 | 检索质量跟踪/引用溯源 | notes 兜底 + LLM 相关性过滤 ✅ | 暂不做,notes 兜底已覆盖 |
+
+### 17.3 教育场景落地要点(本窗口爬取核实)
+
+> 来源:inonx / datasofttechnologies / vife.ai / brainxtech 2026 AI 教育产品实践
+
+- **三大失败模式(我们全避开,核心设计被行业反向验证)**:
+  1. 无基线评估 → 我们有前测/后测;
+  2. 附和式对话("pleasant but unchallenging")→ 我们费曼先答后讲 + 追问找盲点;
+  3. 无知识追踪 → 我们有 mastery 画像 + SM-2。
+- **eval loop 替代单元测试**:"Socratic dialogue 不能单测,但能按 rubric 打分"——这是 B1 LLM eval 黄金集的依据。
+- **学习指标要跟踪**:mastery 变化 / hint 使用率 / **流失率(abandonment)** / 达成时间——C 阶段分析脚本的指标来源(第 18.3)。
+- **reward gaming(刷 hint 走捷径)**:我们的 hint 只给方向不给答案,天然防护;但 C 阶段要记录 hint 使用率作为数据质量信号。
+- **内容安全**:教育内容风险低,但 LLM 输出需过一轮过滤(禁止泄露练习答案已在 prompt 层,可加输出断言)。
+- **evaluation 顺序**:先写前后测诊断 → 再写 LLM 代码(行业一致做法,我们已符合)。
+
+### 17.4 多租户/多用户要点(本窗口爬取核实)
+
+> 来源:CSDN 多租户 LLM 网关(80+ 租户/日 200 万调用)/ agentgateway / conferbot
+
+- **限流按用户维度,不按 IP**:每用户每日配额(注册用户更可信)+ 全局熔断兜底。
+- **会话隔离(最易忽略的致命点)**:每个用户动态 sessionId=uuid4,防串台——我们 Web 目前无 session 概念,C 阶段必须加。
+- **超限优雅降级**:返回 429 + 友好文案(如"今日学习额度已用完,明天再来"),不是报错页。
+- **API key 不明文**:key 在 .env 且 .gitignore 排除,已满足;登录密码存 hash。
+- **配额刷新**:每日 0 点重置计数;新用户首次访问按 SET NX 防并发重复初始化。
+
+---
+
+## 18. C 阶段多人对照实施方案(v2.1,2026-08-23 定稿)
+
+### 18.1 目标与样本
+
+- **目标**:真实组间对照——"费曼组(feynman) vs 讲解组(lecture)"前后测提升差,出"费曼组提升显著高于讲解组"的硬数据。
+- **样本:n≥20,分两批**。n≥10 每组才 5 人,统计功效不足,出的数字只能算探索性;n≥20(每组 10)才可能跑出 p<0.05。**第一批 10 人先验证流程**(数据链路干净/mode 分组正确/无 bug),跑通后第二批补到 20,避免一次性拉 20 人结果系统有问题全废。
+- **对象**:不熟 Python 的同学(前测 40-60% 才有提升空间,天花板效应用户本人已踩过)。
+
+### 18.2 C0 地基(0.5-1 天)——先让仓库可复现可访问
+
+1. `requirements.txt` 钉版本 + `.env.example` + `.dockerignore`
+2. GitHub Actions CI:`pytest tests/ -q` 全绿才准合(66 测试门禁)
+3. Docker 部署入口(第 19 节):本机已有 Docker 29.7.2 + Compose v5.4.0
+
+### 18.3 C1 实验工程化(0.5-1 天)——让数据经得起拷问
+
+1. **注册/登录**:users 表加 `password_hash`(hashlib 即可,不搞 OAuth)+ session token(uuid4,服务端存 session 表)
+2. **配额**:每日每用户 LLM 调用上限(~30 行,防刷 key)+ 全局熔断 + 429 友好文案(17.4)
+3. **`web/static/app.js:90` 改后端定 mode**:提交题组时后端按 `users.group_name` 服务端强制(lecture/feynman),**防前端篡改破坏实验分组**
+4. **`docs/EXPERIMENT.md`(先写再拉人,比拉人重要)**:
+   - 预注册假设:"费曼组后测提升显著高于讲解组(α=0.05)"
+   - 排除标准:前测≥90% 标记天花板,组间对比报告剔除与否**两个版本**
+   - 流失定义:注册后未完成闭环(前测→教学→后测)者,分析时分别报告
+   - 作弊检测:答题耗时<3s 标记;前后测同设备/同 IP 检测
+   - 知情同意:随机分组说明(可能分到讲解组),数据仅用于学习效果研究
+5. **`scripts/analyze_experiment.py`**:读 assessments/exercise_logs → 组间对比(均值/提升 pp/流失率/答题时长异常)+ 学习指标(mastery 变化/hint 使用率,17.3)→ markdown 报告
+
+### 18.4 C2 拉人跑数据(1-2 周)
+
+- 注册即随机分组;每完成一人备份一次 state.db(`cp data/state.db data/state.db.bak_日期`)
+- 跑完出分析报告;数据作废红线:任何编造数据行为,报告如实写失败项
+
+### 18.5 D 阶段工程补强(穿插,各 0.5 天)
+
+| 项 | 内容 | 对应标准 |
+|---|---|---|
+| D1 LLM eval 黄金集 | 20-30 例 rubric:讲解不含答案/诊断 JSON 可解析/报告数字与库一致/输出无有害内容;每次 prompt/模型变更跑,回归回滚 | 17.2 Evals |
+| D2 Playwright E2E | 6 步闭环冒烟(注册→前测→诊断→费曼→后测→报告),mock LLM | 17.1 前端零测试作废 |
+| D3 prompt 版本化 | system prompt 移入 prompts/,git 可 diff | 17.2 版本控制 |
+| D4 session trace | llm_logs 加 session_id,一次闭环可回放 | 17.2 可观测性 |
+
+### 18.6 砍掉(别犹豫)
+
+TS 学习包(用户未学 TS,node 沙箱新机制,判题差异化已由 SQL 完成)/ 贡献热力图(观感)/ vision-exp(有下线风险)/ 爬合规语料(现有 notes 够用,按需再补)。
+
+---
+
+## 19. Docker 部署方案(v2.1,2026-08-23 定稿)
+
+### 19.1 为什么
+
+本机已有 Docker 29.7.2 + Compose v5.4.0(daemon 运行中)。Docker 一次性解决:依赖可复现(进镜像)、环境一致(Anaconda 依赖差异消失)、**SQLite 卷挂载持久化**(容器重建不丢数据)。对比 Render/Railway 免费层(重启丢数据、同学并发受限),Docker + 本机对 C 阶段实验窗口最合适。
+
+### 19.2 文件结构
+
+- **Dockerfile**:`python:3.13-slim` + 非 root 用户 + 依赖分层安装(`COPY requirements.txt` 先于代码,利用缓存)+ `CMD uvicorn web.app:app --host 0.0.0.0 --port 8001`
+- **compose.yaml**:`api` 服务 + `./data:/app/data` 卷挂载(state.db 落在宿主机)+ `healthcheck`(GET /health)+ `restart: unless-stopped`
+- **.dockerignore**:排除 `.env`/`state.db`/`__pycache__`/`.git`/`tests`/`*.pyc`
+- 注意:DB_PATH 指向 `/app/data/state.db`(挂载卷内),不是容器内工作目录
+
+### 19.3 对外访问(同学入口)
+
+- **cloudflared tunnel**(免费 HTTPS 内网穿透):`cloudflared tunnel --url http://127.0.0.1:8001`,生成 https 链接发给同学,数据留在本机
+- 或局域网 IP(`--host 0.0.0.0` 已开,同网段直连)
+- 云部署(Render/Railway)留作**实验后**决策(若长期运营再迁),不阻塞 C 阶段
+
+### 19.4 运维要点
+
+- 备份:`docker compose exec api cp /app/data/state.db /app/data/state.db.bak_$(date +%Y%m%d_%H%M)`(每完成一人跑一次)
+- 升级流程:`git pull && docker compose build && docker compose up -d`,卷在,数据在
+- 日志:`docker compose logs -f api`
+
+### 19.5 验证清单(部署后手机测)
+
+- [ ] https 链接能打开首页
+- [ ] 注册→前测→诊断→后测→报告全流程跑通
+- [ ] 容器 `docker compose restart` 后数据不丢(卷持久化验证)
+- [ ] 未登录访问 API 返回 401,不是数据
+- [ ] 同账号连续调用触达配额返回 429 友好文案
 ```

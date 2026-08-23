@@ -29,7 +29,7 @@ def _run_quiz(user_id: str, questions: list[dict], mode: str, kind: str,
         db.log_exercise(user_id, q["ex_id"], q.get("kp_id", ""), ok, ans, msg,
                         db_path=db_path)
     rate = round(score / total, 2) if total else 0.0
-    db.record_assessment(user_id, chapter, kind, mode, rate, total, db_path)
+    db.record_assessment(user_id, chapter, kind, mode, rate, total, db_path=db_path)
     return rate
 
 

@@ -4,8 +4,11 @@
 从 P0 第一行代码就是多用户，不做返工。
 """
 
+import hashlib
 import json
+import secrets
 import sqlite3
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -57,6 +60,7 @@ CREATE TABLE IF NOT EXISTS assessments (
   mode TEXT,
   score REAL,
   total INTEGER,
+  elapsed_seconds REAL,     -- 整套答题耗时（作弊检测依据，C1）
   created_at TEXT
 );
 
@@ -80,6 +84,13 @@ CREATE TABLE IF NOT EXISTS llm_logs (
   attempts INTEGER,           -- 外层重试次数
   expanded INTEGER,           -- 是否发生推理预算扩容
   source TEXT,                -- api / ollama
+  user_id TEXT,               -- 发起用户（C 阶段配额按用户计费）
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
   created_at TEXT
 );
 """
@@ -101,9 +112,17 @@ def init_db(db_path: str | None = None) -> None:
         ucols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
         if "group_name" not in ucols:
             c.execute("ALTER TABLE users ADD COLUMN group_name TEXT DEFAULT NULL")
+        if "password_hash" not in ucols:
+            c.execute("ALTER TABLE users ADD COLUMN password_hash TEXT DEFAULT NULL")
         kcols = {r[1] for r in c.execute("PRAGMA table_info(knowledge_points)")}
         if "review_interval" not in kcols:
             c.execute("ALTER TABLE knowledge_points ADD COLUMN review_interval INTEGER DEFAULT 0")
+        acols = {r[1] for r in c.execute("PRAGMA table_info(assessments)")}
+        if "elapsed_seconds" not in acols:
+            c.execute("ALTER TABLE assessments ADD COLUMN elapsed_seconds REAL")
+        lcols = {r[1] for r in c.execute("PRAGMA table_info(llm_logs)")}
+        if "user_id" not in lcols:
+            c.execute("ALTER TABLE llm_logs ADD COLUMN user_id TEXT")
 
 
 def get_user(user_id: str, name: str | None = None, db_path: str | None = None) -> dict:
@@ -126,6 +145,108 @@ def get_user(user_id: str, name: str | None = None, db_path: str | None = None) 
         return dict(row)
 
 
+# ==================== C 阶段：注册 / 会话 / 配额（PLAN 18.3） ====================
+
+
+def _hash_password(pwd: str) -> str:
+    """pbkdf2 加盐哈希，格式 salt$hash（标准库，零依赖）。"""
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", pwd.encode(), salt.encode(), 100_000).hex()
+    return f"{salt}${h}"
+
+
+def _verify_password(pwd: str, stored: str) -> bool:
+    if not stored:
+        return False
+    try:
+        salt, h = stored.split("$", 1)
+    except ValueError:
+        return False
+    return h == hashlib.pbkdf2_hmac("sha256", pwd.encode(), salt.encode(), 100_000).hex()
+
+
+def _auto_group(db_path: str | None = None) -> str:
+    """注册自动分组：分到当前人数少的组（均衡分配，实验设计见 docs/EXPERIMENT.md）。"""
+    with _conn(db_path) as c:
+        feynman = c.execute(
+            "SELECT COUNT(*) FROM users WHERE group_name='feynman'").fetchone()[0]
+        lecture = c.execute(
+            "SELECT COUNT(*) FROM users WHERE group_name='lecture'").fetchone()[0]
+    return "lecture" if lecture < feynman else "feynman"
+
+
+def register_user(user_id: str, password: str, name: str | None = None,
+                  group_name: str | None = None,
+                  db_path: str | None = None) -> dict:
+    """注册新用户：密码哈希 + 自动分组。user_id 已存在则抛 ValueError。"""
+    with _conn(db_path) as c:
+        row = c.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if row is not None:
+            raise ValueError(f"user_id 已存在: {user_id}")
+        now = datetime.now().isoformat(timespec="seconds")
+        g = group_name or _auto_group(db_path)
+        c.execute(
+            "INSERT INTO users (user_id, name, created_at, group_name, password_hash) "
+            "VALUES (?,?,?,?,?)",
+            (user_id, name or user_id, now, g, _hash_password(password)),
+        )
+        row = c.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return dict(row)
+
+
+def verify_user(user_id: str, password: str, db_path: str | None = None) -> bool:
+    with _conn(db_path) as c:
+        row = c.execute("SELECT password_hash FROM users WHERE user_id=?", (user_id,)).fetchone()
+    return bool(row) and _verify_password(password, row["password_hash"])
+
+
+def create_session(user_id: str, db_path: str | None = None) -> str:
+    """登录建 session（uuid4，防串台）。返回 session_id。"""
+    sid = uuid.uuid4().hex
+    with _conn(db_path) as c:
+        c.execute("INSERT INTO sessions (session_id, user_id, created_at) VALUES (?,?,?)",
+                  (sid, user_id, datetime.now().isoformat(timespec="seconds")))
+    return sid
+
+
+def get_session_user(session_id: str, db_path: str | None = None) -> str | None:
+    with _conn(db_path) as c:
+        row = c.execute("SELECT user_id FROM sessions WHERE session_id=?", (session_id,)).fetchone()
+    return row["user_id"] if row else None
+
+
+def delete_session(session_id: str, db_path: str | None = None) -> None:
+    with _conn(db_path) as c:
+        c.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+
+
+def today_usage(user_id: str, db_path: str | None = None) -> int:
+    """该用户今日 LLM 调用次数（llm_logs 计数，配额依据）。"""
+    today = datetime.now().date().isoformat()
+    with _conn(db_path) as c:
+        row = c.execute(
+            "SELECT COUNT(*) FROM llm_logs WHERE user_id=? AND date(created_at)=?",
+            (user_id, today)).fetchone()
+    return row[0]
+
+
+def global_today_usage(db_path: str | None = None) -> int:
+    today = datetime.now().date().isoformat()
+    with _conn(db_path) as c:
+        row = c.execute(
+            "SELECT COUNT(*) FROM llm_logs WHERE date(created_at)=?", (today,)).fetchone()
+    return row[0]
+
+
+def quota_exceeded(user_id: str, db_path: str | None = None) -> tuple[bool, str]:
+    """配额检查：每用户上限 + 全局熔断。返回 (是否超限, 文案)。"""
+    if today_usage(user_id, db_path) >= config.DAILY_LLM_LIMIT_PER_USER:
+        return True, f"今日学习额度已用完（{config.DAILY_LLM_LIMIT_PER_USER} 次），明天再来吧"
+    if global_today_usage(db_path) >= config.GLOBAL_DAILY_LLM_LIMIT:
+        return True, "今日全站额度已满，请明天再来"
+    return False, ""
+
+
 def assign_group(user_id: str, group_name: str, db_path: str | None = None) -> dict:
     """把用户分到实验组（feynman / lecture）。返回更新后的用户。"""
     get_user(user_id, db_path=db_path)  # 确保存在
@@ -140,6 +261,20 @@ def list_users(db_path: str | None = None) -> list[dict]:
     """全部用户（含分组），供 P1+ 组间对照实验统计。"""
     with _conn(db_path) as c:
         rows = c.execute("SELECT * FROM users ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_assessments(user_id: str, chapter: str | None = None,
+                     db_path: str | None = None) -> list[dict]:
+    """某用户的全部测评记录（按时间升序）。C1 实验分析与 auth 测试共用。"""
+    sql = "SELECT * FROM assessments WHERE user_id=?"
+    args: list = [user_id]
+    if chapter:
+        sql += " AND chapter=?"
+        args.append(chapter)
+    sql += " ORDER BY created_at"
+    with _conn(db_path) as c:
+        rows = c.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -246,12 +381,14 @@ def _update_kp_mastery(c: sqlite3.Connection, user_id: str, kp_id: str,
 
 
 def record_assessment(user_id: str, chapter: str, kind: str, mode: str,
-                      score: float, total: int, db_path: str | None = None) -> None:
+                      score: float, total: int, elapsed_seconds: float | None = None,
+                      db_path: str | None = None) -> None:
+    """记录前测/后测结果。elapsed_seconds: 整套答题耗时（作弊检测依据，C1）。"""
     with _conn(db_path) as c:
         c.execute(
-            "INSERT INTO assessments (user_id, chapter, kind, mode, score, total, created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (user_id, chapter, kind, mode, score, total,
+            "INSERT INTO assessments (user_id, chapter, kind, mode, score, total, "
+            "elapsed_seconds, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (user_id, chapter, kind, mode, score, total, elapsed_seconds,
              datetime.now().isoformat(timespec="seconds")),
         )
 
@@ -393,15 +530,19 @@ def schedule_next_review(user_id: str, kp_id: str, days: int,
 def log_llm_call(caller: str, model: str, prompt_tokens: int,
                  completion_tokens: int, total_tokens: int, latency_ms: int,
                  attempts: int = 1, expanded: bool = False,
-                 source: str = "api", db_path: str | None = None) -> None:
-    """记录一次 LLM 调用（可观测性：token 用量 + 耗时，PLAN 8 多 Agent 效率评估）。"""
+                 source: str = "api", user_id: str | None = None,
+                 db_path: str | None = None) -> None:
+    """记录一次 LLM 调用（可观测性：token 用量 + 耗时，PLAN 8 多 Agent 效率评估）。
+
+    user_id 由 model 层 hook 自动附带（C 阶段配额按用户计费，PLAN 18.3）。
+    """
     with _conn(db_path) as c:
         c.execute(
             "INSERT INTO llm_logs (caller, model, prompt_tokens, completion_tokens, "
-            "total_tokens, latency_ms, attempts, expanded, source, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "total_tokens, latency_ms, attempts, expanded, source, user_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (caller, model, prompt_tokens, completion_tokens, total_tokens,
-             latency_ms, attempts, int(expanded), source,
+             latency_ms, attempts, int(expanded), source, user_id,
              datetime.now().isoformat(timespec="seconds")),
         )
 

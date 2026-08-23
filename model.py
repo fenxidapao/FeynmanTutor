@@ -9,6 +9,7 @@
     text = chat([{"role": "user", "content": "你好"}])
 """
 
+import contextvars
 import json
 import time
 import urllib.error
@@ -23,6 +24,18 @@ MAX_BUDGET = 8000  # 推理预算扩容上限（max_tokens 不会超过它）
 # 可观测性 hook：外部用 set_log_hook 注册（见 db.log_llm_call），
 # 每次成功的 LLM 调用会回调 (caller, model, usage, latency_ms, attempts, expanded, source)。
 LOG_HOOK = None
+
+# 当前请求用户（Web 层设置，hook 落库带 user_id 供配额计费，PLAN 18.3）
+_CURRENT_USER = contextvars.ContextVar("ft_current_user", default=None)
+
+
+def set_current_user(user_id: str | None) -> None:
+    """设置本次请求的发起用户（contextvar，线程安全）。None 清除。"""
+    _CURRENT_USER.set(user_id)
+
+
+def get_current_user() -> str | None:
+    return _CURRENT_USER.get()
 
 
 def set_log_hook(fn) -> None:
@@ -220,6 +233,7 @@ def _fire_hook(caller: str, usage: dict, latency_ms: int,
             attempts=attempts,
             expanded=expanded,
             source=source,
+            user_id=_CURRENT_USER.get(),
         )
     except Exception as e:  # 日志失败绝不影响主流程
         print(f"[!] LLM 日志写入失败（忽略）: {type(e).__name__}: {e}")

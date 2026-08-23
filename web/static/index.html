@@ -18,9 +18,13 @@
       </div>
     </div>
     <div class="user-box">
-      <label>用户</label>
-      <input id="userId" value="u0" placeholder="user_id">
-      <button id="btnLoadUser" class="ghost">切换</button>
+      <label>账号</label>
+      <input id="userId" value="" placeholder="user_id">
+      <input id="userPwd" type="password" placeholder="密码" class="pwd">
+      <button id="btnLogin" class="ghost">登录</button>
+      <button id="btnRegister" class="ghost">注册</button>
+      <button id="btnLogout" class="ghost hidden">退出</button>
+      <span id="loginHint" class="hint"></span>
     </div>
   </header>
 

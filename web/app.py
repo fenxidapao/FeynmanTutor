@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
+import config  # noqa: E402
 import db  # noqa: E402
 import grader  # noqa: E402
 import learning_pack  # noqa: E402
@@ -43,12 +44,101 @@ model.set_log_hook(lambda **kw: db.log_llm_call(**kw))
 WEB_DIR = Path(__file__).resolve().parent / "static"
 
 
+# ==================== C 阶段：鉴权 / 配额工具（PLAN 18.3） ====================
+
+def _require_auth(session_id: str | None, user_id: str) -> str:
+    """EXPERIMENT_AUTH=1 时强制 session 鉴权：session 解析的 user_id 必须与请求一致。
+    返回最终 user_id。默认 0 时原样返回（兼容本机演示与既有测试）。"""
+    if not config.EXPERIMENT_AUTH:
+        return user_id
+    if not session_id:
+        raise HTTPException(401, "未登录，请先注册/登录")
+    uid = db.get_session_user(session_id)
+    if uid is None:
+        raise HTTPException(401, "会话无效或已过期，请重新登录")
+    if uid != user_id:
+        raise HTTPException(403, "无权访问该用户数据")
+    return uid
+
+
+def _check_quota(user_id: str) -> None:
+    """每用户每日 LLM 配额 + 全局熔断（EXPERIMENT_AUTH=1 时生效）。"""
+    if not config.EXPERIMENT_AUTH:
+        return
+    exceeded, msg = db.quota_exceeded(user_id)
+    if exceeded:
+        raise HTTPException(429, msg)
+
+
+def _start_req(session_id: str | None, user_id: str) -> str:
+    """业务端点统一入口：鉴权 + 标记当前用户（hook 计费用）。返回有效 user_id。"""
+    uid = _require_auth(session_id, user_id)
+    _check_quota(uid)
+    model.set_current_user(uid)
+    return uid
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB_DIR / "index.html")
 
 
+@app.get("/health")
+def health():
+    """存活检查（compose healthcheck 依赖，PLAN 19.5）。"""
+    return {"status": "ok", "service": "feynmantutor"}
+
+
 # ==================== 用户 ====================
+
+def _public_user(user: dict) -> dict:
+    """返回给前端的用户信息：剥离 password_hash（安全，C1）。"""
+    return {k: v for k, v in user.items() if k != "password_hash"}
+
+
+@app.post("/api/register")
+def api_register(payload: dict):
+    """注册：自动随机分组（feynman/lecture 均衡分配）+ 建 session。"""
+    user_id = (payload.get("user_id") or "").strip()
+    password = payload.get("password") or ""
+    name = payload.get("name") or ""
+    if not user_id or not password:
+        raise HTTPException(400, "user_id 和密码必填")
+    if len(password) < 4:
+        raise HTTPException(400, "密码至少 4 位")
+    try:
+        user = db.register_user(user_id, password, name=name or None)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    sid = db.create_session(user_id)
+    return {"session_id": sid, "user": _public_user(user)}
+
+
+@app.post("/api/login")
+def api_login(payload: dict):
+    user_id = (payload.get("user_id") or "").strip()
+    password = payload.get("password") or ""
+    if not user_id or not password or not db.verify_user(user_id, password):
+        raise HTTPException(401, "user_id 或密码错误")
+    sid = db.create_session(user_id)
+    return {"session_id": sid, "user": _public_user(db.get_user(user_id))}
+
+
+@app.post("/api/logout")
+def api_logout(payload: dict):
+    sid = payload.get("session_id")
+    if sid:
+        db.delete_session(sid)
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def api_me(session_id: str = Query(None)):
+    uid = db.get_session_user(session_id) if session_id else None
+    if not uid:
+        raise HTTPException(401, "未登录")
+    return _public_user(db.get_user(uid))
+
 
 @app.get("/api/users")
 def api_users():
@@ -112,11 +202,15 @@ def _strip_answers(qs: list[dict]) -> list[dict]:
 @app.post("/api/quiz/{course}/{kind}/submit")
 def api_quiz_submit(course: str, kind: str,
                     payload: dict):
-    """提交一套题。payload: {user_id, chapter?, mode?, answers: {ex_id: answer}}"""
-    user_id = payload["user_id"]
+    """提交一套题。payload: {user_id, session_id?, chapter?, mode?, answers: {ex_id: answer}}"""
+    session_id = payload.get("session_id")
+    user_id = _start_req(session_id, payload["user_id"])
     answers = payload["answers"]
     chapter = payload.get("chapter")
     mode = payload.get("mode", "feynman")
+    if config.EXPERIMENT_AUTH:
+        # C1-3：实验分组由服务端按 group_name 强制，前端传的 mode 无效（防篡改破坏对照）
+        mode = db.get_user(user_id).get("group_name") or "feynman"
     if kind == "pretest":
         qs = learning_pack.load_pretest(course)
     else:
@@ -135,7 +229,8 @@ def api_quiz_submit(course: str, kind: str,
         details.append({"ex_id": q["ex_id"], "correct": ok, "feedback": msg})
 
     score = correct / len(qs) if qs else 0.0
-    db.record_assessment(user_id, chapter or "all", kind, mode, score, len(qs))
+    db.record_assessment(user_id, chapter or "all", kind, mode, score, len(qs),
+                         elapsed_seconds=payload.get("elapsed_seconds"))
     return {"score": score, "correct": correct, "total": len(qs), "details": details}
 
 
@@ -158,8 +253,9 @@ def api_exercises(course: str, kp_id: str | None = None):
 
 @app.post("/api/grade")
 def api_grade(payload: dict):
-    """判一道题。payload: {user_id, ex_id, answer}"""
-    user_id = payload["user_id"]
+    """判一道题。payload: {user_id, session_id?, ex_id, answer}"""
+    session_id = payload.get("session_id")
+    user_id = _start_req(session_id, payload["user_id"])
     ex_id = payload["ex_id"]
     answer = payload.get("answer", "")
     ex = _find_exercise(ex_id)
@@ -184,10 +280,12 @@ def _find_exercise(ex_id: str) -> dict | None:
 # ==================== 讲解 / 费曼追问 ====================
 
 @app.get("/api/explain/{course}/{kp_id}")
-def api_explain(course: str, kp_id: str, user_id: str = Query("u0")):
+def api_explain(course: str, kp_id: str, user_id: str = Query("u0"),
+                session_id: str = Query(None)):
     """讲解知识点（RAG 检索 → LLM 过滤 → notes 兜底）。"""
+    uid = _start_req(session_id, user_id)
     try:
-        text = feynman.explain_kp(user_id, kp_id, course)
+        text = feynman.explain_kp(uid, kp_id, course)
     except KeyError:
         raise HTTPException(404, f"未知知识点: {kp_id}")
     return {"kp_id": kp_id, "explanation": text}
@@ -195,7 +293,9 @@ def api_explain(course: str, kp_id: str, user_id: str = Query("u0")):
 
 @app.post("/api/feynman/turn")
 def api_feynman_turn(payload: dict):
-    """费曼追问一轮。payload: {course, kp_id, transcript: [{role, content}...]}"""
+    """费曼追问一轮。payload: {course, kp_id, user_id?, session_id?, transcript: [{role, content}...]}"""
+    session_id = payload.get("session_id")
+    uid = _start_req(session_id, payload.get("user_id", "u0"))
     course = payload["course"]
     kp_id = payload["kp_id"]
     transcript = payload.get("transcript", [])
@@ -209,11 +309,12 @@ def api_feynman_turn(payload: dict):
 
 @app.post("/api/feynman/summarize")
 def api_feynman_summarize(payload: dict):
-    """费曼结束，总结盲点。payload: {course, kp_id, transcript, user_id}"""
+    """费曼结束，总结盲点。payload: {course, kp_id, transcript, user_id?, session_id?}"""
+    session_id = payload.get("session_id")
+    uid = _start_req(session_id, payload.get("user_id", "u0"))
     course = payload["course"]
     kp_id = payload["kp_id"]
     transcript = payload.get("transcript", [])
-    user_id = payload.get("user_id", "u0")
     graph = learning_pack.load_graph(course)
     kp = graph["_by_id"].get(kp_id)
     if kp is None:
@@ -221,40 +322,47 @@ def api_feynman_summarize(payload: dict):
     gaps = feynman.summarize_gaps(kp, transcript)
     # 记录讲解次数（费曼环节算讲解一次）
     if transcript:
-        feynman._update_kp_after_explain(user_id, kp, None)
+        feynman._update_kp_after_explain(uid, kp, None)
     return {"gaps": gaps}
 
 
 # ==================== 诊断 / 路径 / 推荐 ====================
 
 @app.post("/api/diagnose/{user_id}")
-def api_diagnose(user_id: str):
-    profile = diagnostic.diagnose(user_id)
-    return profile
+def api_diagnose(user_id: str, session_id: str = Query(None)):
+    uid = _start_req(session_id, user_id)
+    return diagnostic.diagnose(uid)
 
 
 @app.get("/api/path/{course}/{user_id}")
-def api_path(course: str, user_id: str):
-    plan = planner.plan_path(user_id, course)
-    return plan
+def api_path(course: str, user_id: str, session_id: str = Query(None)):
+    uid = _start_req(session_id, user_id)
+    return planner.plan_path(uid, course)
 
 
 @app.get("/api/recommend/{course}/{user_id}")
-def api_recommend(course: str, user_id: str, top_n: int = 5):
-    return recommender.recommend(user_id, course, top_n=top_n)
+def api_recommend(course: str, user_id: str, top_n: int = 5,
+                  session_id: str = Query(None)):
+    uid = _start_req(session_id, user_id)
+    return recommender.recommend(uid, course, top_n=top_n)
 
 
 # ==================== 报告 / 画像 ====================
 
 @app.get("/api/report/{course}/{user_id}")
-def api_report(course: str, user_id: str):
-    r = assessor.report(user_id, None)
-    return r
+def api_report(course: str, user_id: str, session_id: str = Query(None)):
+    uid = _start_req(session_id, user_id)
+    return assessor.report(uid, None)
 
 
 @app.get("/api/heatmap/{user_id}")
-def api_heatmap(user_id: str):
-    """热力图数据：12 知识点掌握度（0~1）+ 状态。"""
+def api_heatmap(user_id: str, session_id: str = Query(None)):
+    """热力图数据：12 知识点掌握度（0~1）+ 状态。纯查询，不产生 LLM 调用。"""
+    if config.EXPERIMENT_AUTH:
+        uid = _require_auth(session_id, user_id)
+    else:
+        uid = user_id
+    model.set_current_user(uid)
     graph = learning_pack.load_graph()
     kps = db.list_kps(user_id)
     by_id = {k["kp_id"]: k for k in kps}

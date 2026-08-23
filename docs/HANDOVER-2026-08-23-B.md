@@ -47,6 +47,7 @@
 | **GitHub 发布** | 仓库 `fenxidapao/FeynmanTutor`（SSH 推送，main 分支）；新建 `.gitignore`（排除 .env/state.db/pyc）+ `.gitattributes`（LF 统一） | 77 文件，无敏感信息，本地 HEAD==远程（1bd096f→bba3f28） |
 | **LLM 可观测性日志** | `model.py`：`_post_chat` 返回 (text, usage, latency)，chat 支持 `caller` + `LOG_HOOK`；`db.py`：新增 `llm_logs` 表 + `log_llm_call` + `llm_stats`；各 Agent 调用点标 caller；CLI `--usage` 命令；Web 启动时注册 hook | 实测 Web 一次诊断 = 7 调用 / 12,346 token / 76s（diagnostic 最重） |
 | **生产级防御评估** | 对照"生产级 Agent 防御要点"评估：判题规则化已防"一本正经犯错"；model 重试/兜底/402/扩容=降级原型；已补可观测性（LLM 日志）。**不做**语义缓存/预算熔断/Schema 强约束（过度工程，简历够用） | 66 测试全绿 |
+> **v2.1 修订注记（2026-08-23 夜间）**：本行"预算熔断=过度工程"已**部分作废**——每用户每日配额升级为必做（C1），语义缓存/Schema 强约束维持不做但理由改为"单机教学场景收益低"。修订明细见 PLAN.md 17.1。
 
 **测试：66 passed**（62 + B3 新增 4；test_p1 原 7 + 新 4 = 11）。
 
@@ -61,6 +62,7 @@
 | 低 | TS 学习包 | node 子进程沙箱新机制，用户未学 TS，性价比最低 |
 | 按需 | 爬合规语料扩充 | 廖雪峰更多章节 / Python 官方文档中文版（PSF），PLAN 4.6 合规红线 |
 | 按需 | 部署 | CloudStudio 只支持静态站；FastAPI 需 Render/Railway，无简历增量先不做 |
+> **v2.1 修订注记（2026-08-23 夜间）**：本行"无简历增量先不做"已**作废**——部署是 C 阶段落地前提，改走 Docker + SQLite 卷挂载（本机已有 Docker 29.7.2），方案见 PLAN.md 第 19 节。
 | 按需 | vision-exp 评估 | exp 模型有下线风险，仅需看图时启用 |
 
 ### 3.1 最高优先级：C 阶段多人对照（拉人）

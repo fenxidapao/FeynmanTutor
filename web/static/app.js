@@ -5,6 +5,7 @@
 
   const state = {
     user: "u0",
+    session: localStorage.getItem("ft_session") || null,
     course: "python",
     kpList: [],
     // 费曼会话状态（前端保存 transcript，后端无状态）
@@ -28,6 +29,13 @@
     return r.json();
   }
 
+  // C1：登录态携带（GET 加 query / POST 加 body 字段 session_id）
+  function sessQuery() { return state.session ? `&session_id=${encodeURIComponent(state.session)}` : ""; }
+  function sessBody(b = {}) {
+    if (state.session) b.session_id = state.session;
+    return b;
+  }
+
   function esc(s) {
     return String(s ?? "").replace(/[&<>"']/g,
       c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -45,11 +53,37 @@
       .map(k => `<option value="${k.kp_id}">[${k.chapter}] ${esc(k.title)}</option>`).join("");
   }
 
+  /* ---------------- 登录 / 注册（C1，PLAN 18.3） ---------------- */
+  async function doAuth(path) {
+    const uid = $("#userId").value.trim();
+    const pwd = $("#userPwd").value;
+    if (!uid || !pwd) { alert("请输入账号和密码"); return; }
+    try {
+      const r = await api(path, { method: "POST", body: JSON.stringify({ user_id: uid, password: pwd }) });
+      state.user = r.user.user_id;
+      state.session = r.session_id;
+      localStorage.setItem("ft_session", r.session_id);
+      $("#userPwd").value = "";
+      const g = r.user.group_name ? `（实验组: ${r.user.group_name}）` : "";
+      $("#loginHint").textContent = `已登录 ${state.user}${g}`;
+      loadKps(); loadQuiz("pretest", "#pretestBox");
+    } catch (e) { alert("失败：" + e.message); }
+  }
+
+  function doLogout() {
+    const sid = state.session;
+    state.session = null; state.user = "u0";
+    localStorage.removeItem("ft_session");
+    $("#loginHint").textContent = "未登录（演示模式 u0）";
+    if (sid) api("/api/logout", { method: "POST", body: JSON.stringify({ session_id: sid }) }).catch(() => {});
+  }
+
   /* ---------------- 前测 / 后测 ---------------- */
   async function loadQuiz(kind, boxSel) {
     const box = $(boxSel);
     box.innerHTML = "<p class='hint'>加载中…</p>";
-    const qs = await api(`/api/quiz/${state.course}/${kind}?user_id=${state.user}`);
+    state.quizStart = Date.now();  // C1：计时作弊检测
+    const qs = await api(`/api/quiz/${state.course}/${kind}?user_id=${state.user}${sessQuery()}`);
     if (!qs.length) { box.innerHTML = "<p class='hint'>无题目</p>"; return; }
     box.innerHTML = "";
     qs.forEach((q, i) => {
@@ -85,9 +119,12 @@
     const btn = $("button.primary", box);
     btn.disabled = true; btn.textContent = "判题中…";
     try {
+      // C1：答题耗时（作弊检测依据，EXPERIMENT.md）
+      const elapsed = state.quizStart ? Math.round((Date.now() - state.quizStart) / 1000) : null;
       const res = await api(`/api/quiz/${state.course}/${kind}/submit`, {
         method: "POST",
-        body: JSON.stringify({ user_id: state.user, answers, mode: "feynman" }),
+        // C1-3：mode 由后端按实验组强制，前端不再指定（防篡改分组）
+        body: JSON.stringify(sessBody({ user_id: state.user, answers, elapsed_seconds: elapsed })),
       });
       // 每题标注对错
       res.details.forEach(d => {
@@ -119,7 +156,7 @@
     const btn = $("#btnDiagnose");
     btn.disabled = true; btn.textContent = "诊断中…";
     try {
-      const p = await api(`/api/diagnose/${state.user}`, { method: "POST" });
+      const p = await api(`/api/diagnose/${state.user}${state.session ? "?session_id=" + encodeURIComponent(state.session) : ""}`, { method: "POST" });
       const weak = (p.weak_points || []).map(w => {
         const id = weakId(w);
         const kp = state.kpList.find(k => k.kp_id === id);
@@ -180,7 +217,7 @@
         try {
           const r = await api("/api/feynman/summarize", {
             method: "POST",
-            body: JSON.stringify({ course: state.course, kp_id: f.kpId, transcript: f.transcript, user_id: state.user }),
+            body: JSON.stringify(sessBody({ course: state.course, kp_id: f.kpId, transcript: f.transcript, user_id: state.user })),
           });
           const g = document.createElement("div");
           g.className = "msg gap";
@@ -192,7 +229,7 @@
         try {
           const r = await api("/api/feynman/turn", {
             method: "POST",
-            body: JSON.stringify({ course: state.course, kp_id: f.kpId, transcript: f.transcript }),
+            body: JSON.stringify(sessBody({ course: state.course, kp_id: f.kpId, transcript: f.transcript, user_id: state.user })),
           });
           f.transcript.push({ role: "assistant", content: r.coach });
           f.round += 1;
@@ -209,7 +246,7 @@
     card.className = "card";
     card.innerHTML = "<h3>标准讲解</h3><div id='explainText' class='hint'>加载中…</div>";
     box.appendChild(card);
-    const r = await api(`/api/explain/${state.course}/${state.feyman.kpId}?user_id=${state.user}`);
+    const r = await api(`/api/explain/${state.course}/${state.feyman.kpId}?user_id=${state.user}${sessQuery()}`);
     $("#explainText").textContent = r.explanation;
     // 接着练习
     const pBtn = document.createElement("button");
@@ -261,7 +298,7 @@
       try {
         const res = await api("/api/grade", {
           method: "POST",
-          body: JSON.stringify({ user_id: state.user, ex_id: ex.ex_id, answer }),
+          body: JSON.stringify(sessBody({ user_id: state.user, ex_id: ex.ex_id, answer })),
         });
         const fb = $(".q-feedback");
         fb.textContent = (res.correct ? "✓ " : "✗ ") + res.feedback;
@@ -285,7 +322,7 @@
     const box = $("#reportBox");
     box.innerHTML = "<p class='hint'>加载中…</p>";
     try {
-      const r = await api(`/api/report/${state.course}/${state.user}`);
+      const r = await api(`/api/report/${state.course}/${state.user}${sessQuery()}`);
       if (r.pre == null && r.post == null) {
         box.innerHTML = "<p class='hint'>还没有前后测数据，先跑前测和后测。</p>";
         $("#reportChartBox").style.display = "none";
@@ -343,7 +380,7 @@
 
   /* ---------------- 热力图 ---------------- */
   async function loadHeatmap() {
-    const d = await api(`/api/heatmap/${state.user}`);
+    const d = await api(`/api/heatmap/${state.user}${sessQuery()}`);
     const labels = d.cells.map(c => c.title);
     const data = d.cells.map(c => c.mastery);
     const colors = d.cells.map(c => {
@@ -389,10 +426,23 @@
   /* ---------------- 初始化 ---------------- */
   async function init() {
     bindSteps();
-    $("#btnLoadUser").onclick = () => {
-      state.user = $("#userId").value.trim() || "u0";
-      alert(`已切换用户：${state.user}`);
-    };
+    $("#btnLogin").onclick = () => doAuth("/api/login");
+    $("#btnRegister").onclick = () => doAuth("/api/register");
+    $("#btnLogout").onclick = doLogout;
+    if (state.session) {
+      // 刷新恢复登录态（服务端校验）
+      try {
+        const me = await api(`/api/me?session_id=${encodeURIComponent(state.session)}`);
+        state.user = me.user_id;
+        $("#loginHint").textContent = `已登录 ${me.user_id}${me.group_name ? `（实验组: ${me.group_name}）` : ""}`;
+        $("#btnLogout").classList.remove("hidden");
+      } catch (e) {
+        state.session = null; localStorage.removeItem("ft_session");
+        $("#loginHint").textContent = "会话已过期，请重新登录";
+      }
+    } else {
+      $("#loginHint").textContent = "演示模式 u0（同学请先注册）";
+    }
     $("#btnDiagnose").onclick = runDiagnose;
     $("#btnStartKp").onclick = () => {
       state.feyman = { kpId: $("#kpSelect").value, transcript: [], round: 0, maxRounds: 3 };

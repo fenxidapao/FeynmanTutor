@@ -30,6 +30,15 @@ DB_PATH = os.environ.get("DB_PATH", str(ROOT / "state.db"))
 SANDBOX_TIMEOUT = int(os.environ.get("SANDBOX_TIMEOUT", "5"))      # 秒
 SANDBOX_MAX_OUTPUT = int(os.environ.get("SANDBOX_MAX_OUTPUT", "65536"))  # 字节
 
+# ---------- C 阶段实验（PLAN 18.3） ----------
+# EXPERIMENT_AUTH=1 时：业务端点强制 session 鉴权 + mode 按 group_name 强制 + 配额生效
+# 默认 0（兼容本机演示/既有测试）；C 阶段部署时置 1
+EXPERIMENT_AUTH = os.environ.get("EXPERIMENT_AUTH", "0") == "1"
+# 每日每用户 LLM 调用上限（一次完整闭环约 12-15 次，重学多遍 50 次合理）
+DAILY_LLM_LIMIT_PER_USER = int(os.environ.get("DAILY_LLM_LIMIT_PER_USER", "50"))
+# 全站每日 LLM 调用总量上限（全局熔断，防单用户/异常刷爆 key）
+GLOBAL_DAILY_LLM_LIMIT = int(os.environ.get("GLOBAL_DAILY_LLM_LIMIT", "300"))
+
 
 def load_dotenv(path: str | None = None) -> None:
     """极简 .env 加载：只读 KEY=VALUE 行，不覆盖已存在的环境变量。"""
