@@ -118,7 +118,7 @@ def _reasons(weak: list[str], titles: dict[str, str], picked: list[dict]) -> dic
                  weak=", ".join(titles.get(w, w) for w in weak[:5]),
                  titles=json.dumps(titles, ensure_ascii=False),
                  items=items)}],
-            temperature=0.2, max_tokens=800,
+            temperature=0.2, max_tokens=800, caller="recommender",
         )
         start, end = raw.find("{"), raw.rfind("}")
         data = json.loads(raw[start:end + 1])

@@ -23,7 +23,7 @@ def test_budget_expansion_retries(monkeypatch):
         calls.append(max_tokens)
         if len(calls) == 1:  # 第一次：预算不足
             raise ReasoningBudgetError("预算不足", max_tokens=max_tokens)
-        return "成功的回答"
+        return "成功的回答", {"prompt_tokens": 10, "total_tokens": 20}, 50
 
     monkeypatch.setattr(model, "_post_chat", fake_post)
     text = model.chat([{"role": "user", "content": "hi"}], max_tokens=200)

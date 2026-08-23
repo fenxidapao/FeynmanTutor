@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 import db  # noqa: E402
 import grader  # noqa: E402
 import learning_pack  # noqa: E402
+import model  # noqa: E402
 import sandbox  # noqa: E402
 from agents import assessor, diagnostic, feynman, planner, recommender  # noqa: E402
 
@@ -34,6 +35,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 可观测性：LLM 调用日志 hook（token/耗时，PLAN 8 多 Agent 效率评估）
+db.init_db()
+model.set_log_hook(lambda **kw: db.log_llm_call(**kw))
 
 WEB_DIR = Path(__file__).resolve().parent / "static"
 

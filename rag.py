@@ -68,7 +68,7 @@ def _llm_filter(kp: dict, docs: list[dict]) -> tuple[list[int], str]:
     raw = model.chat(
         [{"role": "system", "content": "你只输出合法 JSON，不加任何解释。"},
          {"role": "user", "content": prompt}],
-        temperature=0.2, max_tokens=1600,
+        temperature=0.2, max_tokens=1600, caller="rag_filter",
     )
     # 容错：提取 JSON 子串（模型可能带 ```json 围栏）
     try:

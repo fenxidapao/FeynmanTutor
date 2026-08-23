@@ -77,7 +77,7 @@ def diagnose(user_id: str, db_path: str | None = None) -> dict:
         raw = model.chat(
             [{"role": "system", "content": "你只输出合法 JSON。"},
              {"role": "user", "content": DIAGNOSE_PROMPT.format(logs=summary, old_profile=old_summary)}],
-            temperature=0.2, max_tokens=1200,
+            temperature=0.2, max_tokens=1200, caller="diagnostic",
         )
         start, end = raw.find("{"), raw.rfind("}")
         data = json.loads(raw[start:end + 1])

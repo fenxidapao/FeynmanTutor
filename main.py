@@ -230,6 +230,23 @@ def cmd_review(args) -> None:
         print(f"下次复习最早在 {soonest} 天后，建议到时再跑 --review。")
 
 
+def cmd_usage() -> None:
+    """LLM 调用统计（PLAN 8 多 Agent 效率评估）：按环节聚合 token/耗时。"""
+    s = db.llm_stats()
+    t = s["total"]
+    if not t["calls"]:
+        print("还没有 LLM 调用记录。先跑一次 --learn / --feynman 再来看。")
+        return
+    print("\n===== LLM 调用统计（可观测性）=====")
+    print(f"总调用 {t['calls']} 次 | 总 token {t['tokens']:,} | "
+          f"总耗时 {t['latency_ms'] / 1000:.1f}s")
+    print(f"\n按环节（token 降序）:")
+    print(f"  {'环节':<20}{'次数':>5}{'token':>10}{'耗时(s)':>10}{'扩容':>6}")
+    for r in s["by_caller"]:
+        print(f"  {r['caller']:<20}{r['calls']:>5}{r['tokens']:>10,}"
+              f"{r['latency_ms'] / 1000:>10.1f}{r['expanded']:>6}")
+
+
 def cmd_health(_args) -> None:
     """环境自检：状态库 / LLM / 沙箱 / 学习包 / RAG。"""
     ok_all = True
@@ -245,7 +262,7 @@ def cmd_health(_args) -> None:
 
     check("状态库可写", lambda: (db.init_db(), db.get_user("__health__")))
     # 注意：deepseek-v4-flash 是推理模型，max_tokens 太小会只输出 reasoning_content
-    check("LLM 可用", lambda: model.chat([{"role": "user", "content": "回复OK两个字"}], max_tokens=200))
+    check("LLM 可用", lambda: model.chat([{"role": "user", "content": "回复OK两个字"}], max_tokens=200, caller="health"))
     check("沙箱可跑", sandbox.check_infrastructure)
     check("学习包完整", lambda: (
         len(learning_pack.load_exercises()) == 40,
@@ -277,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="把用户分到实验组（P1+ 组间对照）")
     parser.add_argument("--users", action="store_true", help="列出全部用户与分组")
     parser.add_argument("--review", action="store_true", help="间隔复习（P2：到期知识点复习）")
+    parser.add_argument("--usage", action="store_true", help="LLM 调用统计（token/耗时，按环节）")
     parser.add_argument("--health", action="store_true", help="环境自检")
     parser.add_argument("course", nargs="?", default="python", help="学习包（默认 python）")
     parser.add_argument("--user", default="u0", help="用户 id（默认 u0=本人）")
@@ -289,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(BANNER)
     db.init_db()
+    # 可观测性：LLM 调用日志 hook（token/耗时，PLAN 8 多 Agent 效率评估）
+    model.set_log_hook(lambda **kw: db.log_llm_call(**kw))
     # register 命令由 cmd_register 全权处理（带 name 创建），其余命令先确保用户存在
     if not args.register:
         db.get_user(args.user)
@@ -315,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         cmd_users(args)
     elif args.review:
         cmd_review(args)
+    elif args.usage:
+        cmd_usage()
     else:
         parser.print_help()
     return 0

@@ -68,6 +68,20 @@ CREATE TABLE IF NOT EXISTS profile (
   avg_correct REAL,
   updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS llm_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  caller TEXT,                -- 调用环节：diagnostic/feynman/hint/planner/recommender/rag/assessor
+  model TEXT,                 -- 实际模型名
+  prompt_tokens INTEGER,      -- 输入 token
+  completion_tokens INTEGER,  -- 输出 token
+  total_tokens INTEGER,       -- 总 token
+  latency_ms INTEGER,         -- 单次调用耗时（毫秒）
+  attempts INTEGER,           -- 外层重试次数
+  expanded INTEGER,           -- 是否发生推理预算扩容
+  source TEXT,                -- api / ollama
+  created_at TEXT
+);
 """
 
 
@@ -374,3 +388,38 @@ def schedule_next_review(user_id: str, kp_id: str, days: int,
     """SM-2 简化版：间隔天数后复习。P0 先记字段，P2 做闭环。"""
     next_review = (datetime.now() + timedelta(days=days)).date().isoformat()
     upsert_kp(user_id, {"kp_id": kp_id, "next_review": next_review}, db_path)
+
+
+def log_llm_call(caller: str, model: str, prompt_tokens: int,
+                 completion_tokens: int, total_tokens: int, latency_ms: int,
+                 attempts: int = 1, expanded: bool = False,
+                 source: str = "api", db_path: str | None = None) -> None:
+    """记录一次 LLM 调用（可观测性：token 用量 + 耗时，PLAN 8 多 Agent 效率评估）。"""
+    with _conn(db_path) as c:
+        c.execute(
+            "INSERT INTO llm_logs (caller, model, prompt_tokens, completion_tokens, "
+            "total_tokens, latency_ms, attempts, expanded, source, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (caller, model, prompt_tokens, completion_tokens, total_tokens,
+             latency_ms, attempts, int(expanded), source,
+             datetime.now().isoformat(timespec="seconds")),
+        )
+
+
+def llm_stats(db_path: str | None = None) -> dict:
+    """LLM 调用统计（按环节聚合）：次数 / token / 耗时，供报告与面试数据。"""
+    with _conn(db_path) as c:
+        rows = c.execute(
+            "SELECT caller, COUNT(*) calls, SUM(total_tokens) tokens, "
+            "SUM(latency_ms) latency_ms, SUM(expanded) expanded "
+            "FROM llm_logs GROUP BY caller ORDER BY tokens DESC",
+        ).fetchall()
+        total = c.execute(
+            "SELECT COUNT(*) calls, COALESCE(SUM(total_tokens),0) tokens, "
+            "COALESCE(SUM(latency_ms),0) latency_ms FROM llm_logs",
+        ).fetchone()
+    return {
+        "by_caller": [dict(r) for r in rows],
+        "total": {"calls": total["calls"], "tokens": total["tokens"],
+                  "latency_ms": total["latency_ms"]},
+    }

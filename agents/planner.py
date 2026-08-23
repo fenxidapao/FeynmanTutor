@@ -151,7 +151,7 @@ def _rationale(weak: list[str], profile: dict, path: list[str],
                  style=profile.get("learning_style", "简答"),
                  path=" → ".join(f"{k}({titles.get(k, k)})" for k in path),
                  title_map=title_map)}],
-            temperature=0.3, max_tokens=400,
+            temperature=0.3, max_tokens=400, caller="planner",
         )
         return raw.strip() or "路径已按依赖和薄弱点规划，见上方顺序。"
     except model.ModelError:

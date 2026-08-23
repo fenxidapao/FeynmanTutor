@@ -99,7 +99,7 @@ def generate_followup(kp: dict, transcript: list[dict]) -> str:
         [{"role": "system", "content": FEYNMAN_SYSTEM},
          {"role": "user", "content": FOLLOWUP_PROMPT.format(
              kp_title=kp.get("title", kp["kp_id"]), transcript=lines or "（刚开始）")}],
-        temperature=0.4, max_tokens=500,
+        temperature=0.4, max_tokens=500, caller="feynman_followup",
     )
     return raw.strip() or "你能再举个具体的例子说明吗？"
 
@@ -115,7 +115,7 @@ def summarize_gaps(kp: dict, transcript: list[dict]) -> list[str]:
             [{"role": "system", "content": "你只输出合法 JSON。"},
              {"role": "user", "content": GAP_PROMPT.format(
                  kp_title=kp.get("title", kp["kp_id"]), transcript=lines)}],
-            temperature=0.2, max_tokens=800,
+            temperature=0.2, max_tokens=800, caller="feynman_gaps",
         )
         start, end = raw.find("{"), raw.rfind("}")
         data = json.loads(raw[start:end + 1])
@@ -178,7 +178,7 @@ def hint_only(exercise: dict, result: dict) -> str:
             [{"role": "system", "content": "你是耐心的编程助教，只给方向提示不给答案。"},
              {"role": "user", "content": HINT_PROMPT.format(
                  prompt=prompt, answer=answer, feedback=feedback)}],
-            temperature=0.3, max_tokens=300,
+            temperature=0.3, max_tokens=300, caller="hint",
         )
         return raw.strip() or "再想想，检查一下你的思路。"
     except model.ModelError:
