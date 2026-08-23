@@ -3,7 +3,9 @@
 基于费曼学习法的个性化学习 Agent 系统：你当老师讲，Agent 追问找盲点；系统建学习画像、
 沙箱判题给硬反馈，前测/后测证明学习效果。多课程支持：**Python**（沙箱判题）+ **SQL**（sqlite3 判题）。
 
-> 项目计划书见 [PLAN.md](PLAN.md)，参考项目库见 [docs/REFERENCE.md](docs/REFERENCE.md)
+[![GitHub](https://img.shields.io/badge/GitHub-fenxidapao%2FFeynmanTutor-blue)](https://github.com/fenxidapao/FeynmanTutor)
+
+> 项目计划书见 [PLAN.md](PLAN.md)，参考项目库见 [docs/REFERENCE.md](docs/REFERENCE.md)，交接文档见 [docs/HANDOVER-2026-08-23.md](docs/HANDOVER-2026-08-23.md)
 
 ## 快速开始
 
@@ -39,6 +41,9 @@ python main.py --review python --user u0              # 复习所有到期知识
 # 8. P2：SQL 课程（sqlite3 内存库判题，students/classes 预置表）
 python main.py --learn sql --user u0                  # SQL 完整闭环
 python main.py --feynman sql.where --user u0          # 只练 SQL 某知识点
+
+# 9. 可观测性：LLM 调用统计（PLAN 8 多 Agent 效率评估：按环节 token/耗时）
+python main.py --usage
 ```
 
 ## 对照实验（P1 验证教学法价值）
@@ -61,6 +66,7 @@ db.py                    # SQLite 状态库（全部表带 user_id，多用户�
 sandbox.py / grader.py   # 沙箱执行器 + 规则判题器（不调 LLM，防漂移）
 sql_grader.py             # SQL 判题引擎（P2：sqlite3 内存库，students/classes 预置表）
 rag.py                   # CourseRAG 检索封装（top-N 全量 → LLM 相关性过滤 → notes 兜底）
+model.py                 # LLM 封装 + 可观测性 hook（每次调用记 token/耗时到 llm_logs 表）
 agents/
   diagnostic.py          # 诊断 Agent：答题记录 → 学习画像
   feynman.py             # 费曼导师 Agent：角色反转教学（先答后讲）
@@ -78,6 +84,7 @@ tests/                   # 单元测试 + 学习包质量自检
 
 每次运行自动写入 `state.db` 的 `assessments` 表：
 `python main.py --report python --user u0` 输出前测 vs 后测正确率对比报告。
+每次 LLM 调用自动写入 `llm_logs` 表（token/耗时按环节聚合）：`python main.py --usage` 查看。
 
 ## 数据与许可
 

@@ -22,6 +22,8 @@
 | 爆款叙事/README 风格 | TradingAgents(角色分工+backtest)、MetaGPT |
 | Agent 理论 | ai-agent-book(李博杰) |
 | 评测/效果评估 | 前测/后测(教育标准方法,无竞品公开做过) |
+| 多 Agent 效率评估 | 已落地 llm_logs 表 + `main.py --usage`(按环节 token/耗时) |
+| 生产级 Agent 防御 | `E:\AI 应用开发\生产级agent防御要点.txt`——本项目取"可观测性",判题规则化已防漂移 |
 
 ---
 

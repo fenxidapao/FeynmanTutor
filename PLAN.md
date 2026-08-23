@@ -450,27 +450,34 @@ python main.py --report python --user u0         # 出效果报告
 - [x] P3:Web Dashboard(FastAPI+原生前端+Chart.js 热力图)已完成,62 测试全绿;部署后议;
 - [x] P2:间隔复习闭环(SM-2 简化,--review)+ SQL 学习包(12 知识点/40 规则题/前后测各 10,sqlite3 判题器)已完成,62 测试全绿;TS 学习包/爬语料待做(按需)。
 - [x] **B 阶段(2026-08-23 下午)**:报告前后测对比柱状图 + 可检查记忆(weak_points 带证据链) + 掌握门槛(blocked) + Python 包 40 题补 explanation + 薄弱点按章节过滤——66 测试全绿,详见 HANDOVER-2026-08-23-B.md
+- [x] **可观测性(2026-08-23 傍晚)**:LLM 调用日志(llm_logs 表 + `--usage` 命令,按环节聚合 token/耗时)——PLAN 8"多 Agent 效率"评估项落地;GitHub 发布(fenxidapao/FeynmanTutor);前端 weak_points 渲染修复——66 测试全绿,详见 HANDOVER-2026-08-23-B.md
 - [ ] **C 阶段(下一窗口主线)**:Web 多人对照实验——前端按 group_name 自动定 mode(当前 app.js 硬编码 feynman),拉不熟 Python 的同学 n≥10,组间对比出"费曼 vs 讲解"数据
+- [ ] **低优先(按需)**:贡献热力图(1.5,观感项) / TS 学习包(node 沙箱,性价比最低) / 爬合规语料(廖雪峰更多章节、Python 官方文档中文版 PSF) / 部署(Render/Railway,无简历增量先不做) / vision-exp(按需)
 
 ### 交接文档(2026-08-23 新增,新窗口必读)
 - **docs/HANDOVER-2026-08-23.md**:完整交接——保留建议/可选项/已完成/踩坑/方向性建议/开工清单
+- **docs/HANDOVER-2026-08-23-B.md**:本窗口(B 阶段+可观测性+GitHub)增量交接,含未完成清单
 - 关键新决策:多课程选 SQL(判题机制差异化);DeepTutor 20k★ 调研(可检查记忆/掌握门槛/测验 explanation 三借鉴点);u0 数据已清空待重测
-- 完整踩坑与决策流水:工作空间 .workbuddy/memory/2026-08-22.md
+- 完整踩坑与决策流水:工作空间 .workbuddy/memory/2026-08-22.md、2026-08-23.md
 
 ## 16. 开工第一条命令(确认环境)
 
 ```bash
+# 0. 环境注意(2026-08-23 踩坑):pytest/uvicorn/fastapi 只在 Anaconda;managed python 没有
+#    pytest: /d/anacoda3/python.exe -m pytest tests/ -q   (项目 tests/ 有 __init__.py,防 site-packages 遮蔽)
+
 # 1. 确认 DeepSeek key 可读(从 deep-research 复制 .env 或新建)
 cp E:/AI 应用开发/agent/.env E:/AI 应用开发/FeynmanTutor/.env   # 只取 DEEPSEEK_* 三行
 
-# 2. 确认 CourseRAG 服务在跑(讲解检索依赖它)
+# 2. 确认 CourseRAG 服务在跑(讲解检索依赖它;没起则 notes 兜底,不影响主流程)
 curl http://127.0.0.1:8000/health   # 若没起: cd CourseRAG && docker compose up -d
 
-# 3. 建项目骨架后,第一步写 config.py + db.py + model.py,跑通一次 LLM 调用再往下
-
-# 4. (2026-08-23 已建好) Web 服务与测试:
-uvicorn web.app:app --host 127.0.0.1 --port 8001 --reload   # Web Dashboard(浏览器打开 http://127.0.0.1:8001/)
-python -m pytest tests/ -q                                    # 62 测试全绿
+# 3. (2026-08-23 已建好) Web 服务与测试:
+/d/anacoda3/python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8001   # Web Dashboard(浏览器打开 http://127.0.0.1:8001/)
+/d/anacoda3/python.exe -m pytest tests/ -q                                   # 66 测试全绿
 python main.py --learn sql --user u0                          # SQL 课程闭环(Python 同理)
 python main.py --review python --user u0                      # 间隔复习
+python main.py --usage                                        # LLM 调用统计(token/耗时,可观测性)
+
+# 4. Git 提交(SSH 免密):git add -A && git commit -m "..." && git push origin main
 ```
