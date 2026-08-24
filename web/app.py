@@ -321,7 +321,7 @@ def api_feynman_turn(payload: dict):
     kp = graph["_by_id"].get(kp_id)
     if kp is None:
         raise HTTPException(404, f"未知知识点: {kp_id}")
-    reply = feynman.generate_followup(kp, transcript)
+    reply = feynman.generate_followup(kp, transcript, uid)
     return {"coach": reply, "transcript": transcript}
 
 
@@ -337,7 +337,7 @@ def api_feynman_summarize(payload: dict):
     kp = graph["_by_id"].get(kp_id)
     if kp is None:
         raise HTTPException(404, f"未知知识点: {kp_id}")
-    gaps = feynman.summarize_gaps(kp, transcript)
+    gaps = feynman.summarize_gaps(kp, transcript, uid)
     # 记录讲解次数（费曼环节算讲解一次）
     if transcript:
         feynman._update_kp_after_explain(uid, kp, None)

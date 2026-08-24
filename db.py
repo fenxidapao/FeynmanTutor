@@ -336,6 +336,7 @@ def log_exercise(user_id: str, ex_id: str, kp_id: str, correct: bool,
 
     mastery = correct_count / seen_count（最近 50 条内该 kp 的正确率）；
     status: 无记录 new / mastery>=0.8 mastered / >0 learning / 全错 reviewing。
+    事务提交后再做动态画像增量更新（E5 Memory，PLAN 可扩展点 3）。
     """
     with _conn(db_path) as c:
         c.execute(
@@ -345,6 +346,52 @@ def log_exercise(user_id: str, ex_id: str, kp_id: str, correct: bool,
              datetime.now().isoformat(timespec="seconds")),
         )
         _update_kp_mastery(c, user_id, kp_id, correct)
+    # 事务已提交（mastery 已更新），增量维护画像——必须在本连接 commit 之后，
+    # 否则第二个连接读不到未提交的 mastery，答对移除判断会失准
+    update_profile_incremental(user_id, kp_id, correct, ex_id, db_path)
+
+
+def update_profile_incremental(user_id: str, kp_id: str, correct: bool,
+                               ex_id: str, db_path: str | None = None) -> None:
+    """动态画像（E5 Memory / PLAN 可扩展点 3）：答题后增量维护 weak_points。
+
+    纯规则，不调 LLM（防漂移）：
+    - 答错：该 kp 不在 weak_points → 追加 {kp_id, reason:"增量：答题答错",
+      evidence:[ex_id]}；已存在 → evidence 追加 ex_id（去重，最多 10 条）；
+    - 答对且该 kp mastery>=0.8：从 weak_points 移除（薄弱点消除，证据链作废）。
+    写新 profile 行（保持历史可追溯，get_profile 取最新）。
+    """
+    if not kp_id:
+        return
+    prof = get_profile(user_id, db_path)
+    weak = parse_weak_details(prof)
+    state = get_kp(user_id, kp_id, db_path) or {}
+    mastery = state.get("mastery") or 0.0
+
+    changed = False
+    if not correct:
+        entry = next((w for w in weak if w["kp_id"] == kp_id), None)
+        if entry is None:
+            weak.append({"kp_id": kp_id, "reason": "增量：答题答错", "evidence": [ex_id]})
+            changed = True
+        else:
+            ev = list(entry.get("evidence") or [])
+            if ex_id and ex_id not in ev:
+                ev = (ev + [ex_id])[:10]
+                entry["evidence"] = ev
+                changed = True
+    elif mastery >= 0.8:
+        before = len(weak)
+        weak = [w for w in weak if w["kp_id"] != kp_id]
+        changed = len(weak) != before
+
+    # 有画像才写（首次答题且答错也会建画像：weak 非空）；答对但无画像不建空画像
+    if changed and (prof is not None or weak):
+        save_profile(user_id, {
+            "weak_points": weak,
+            "learning_style": (prof or {}).get("learning_style", "简答"),
+            "avg_correct": (prof or {}).get("avg_correct", 0.0),
+        }, db_path)
 
 
 def _update_kp_mastery(c: sqlite3.Connection, user_id: str, kp_id: str,

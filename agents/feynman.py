@@ -39,6 +39,25 @@ def _update_kp_after_explain(user_id: str, kp: dict, db_path: str | None) -> Non
     }, db_path)
 
 
+def profile_context(user_id: str, db_path: str | None = None) -> str:
+    """历史画像摘要（E5 Memory 跨会话记忆）：供费曼追问/盲点总结注入 prompt。
+
+    新会话不重新诊断也能带上上次的薄弱点与学习偏好（诊断仍是主入口，
+    这里是轻量注入）。无画像返回空串（不干扰既有 prompt）。
+    """
+    prof = db.get_profile(user_id, db_path)
+    if not prof:
+        return ""
+    weak = db.parse_weak_ids(prof)
+    style = prof.get("learning_style") or ""
+    parts = []
+    if weak:
+        parts.append("该学生历史薄弱点: " + ", ".join(weak))
+    if style:
+        parts.append("学习偏好: " + style)
+    return "；".join(parts)
+
+
 def explain_kp(user_id: str, kp_id: str, course: str = "python",
                db_path: str | None = None) -> str:
     """讲解知识点：RAG 检索（LLM 过滤）→ notes 兜底。返回讲解文本。"""
@@ -58,30 +77,43 @@ def explain_kp(user_id: str, kp_id: str, course: str = "python",
     return ctx["context"]
 
 
-def generate_followup(kp: dict, transcript: list[dict]) -> str:
-    """基于已有对话生成教练的下一轮提问。"""
+def generate_followup(kp: dict, transcript: list[dict], user_id: str | None = None,
+                      db_path: str | None = None) -> str:
+    """基于已有对话生成教练的下一轮提问。
+
+    user_id 传入时注入历史画像（E5 跨会话记忆），让追问针对学生已知薄弱点。
+    """
     lines = "\n".join(f"{'学生' if t['role'] == 'user' else '教练'}: {t['content']}"
                       for t in transcript)
+    memory = profile_context(user_id, db_path) if user_id else ""
+    user_prompt = prompts.load("feynman_followup.md").format(
+        kp_title=kp.get("title", kp["kp_id"]), transcript=lines or "（刚开始）")
+    if memory:
+        user_prompt += f"\n\n参考背景：{memory}"
     raw = model.chat(
         [{"role": "system", "content": prompts.load("feynman_system.md")},
-         {"role": "user", "content": prompts.load("feynman_followup.md").format(
-             kp_title=kp.get("title", kp["kp_id"]), transcript=lines or "（刚开始）")}],
+         {"role": "user", "content": user_prompt}],
         temperature=0.4, max_tokens=500, caller="feynman_followup",
     )
     return raw.strip() or "你能再举个具体的例子说明吗？"
 
 
-def summarize_gaps(kp: dict, transcript: list[dict]) -> list[str]:
+def summarize_gaps(kp: dict, transcript: list[dict], user_id: str | None = None,
+                   db_path: str | None = None) -> list[str]:
     """3 轮后总结盲点。"""
     if not transcript:
         return []
     lines = "\n".join(f"{'学生' if t['role'] == 'user' else '教练'}: {t['content']}"
                       for t in transcript)
+    memory = profile_context(user_id, db_path) if user_id else ""
+    user_prompt = prompts.load("feynman_gaps.md").format(
+        kp_title=kp.get("title", kp["kp_id"]), transcript=lines)
+    if memory:
+        user_prompt += f"\n\n参考背景：{memory}"
     try:
         raw = model.chat(
             [{"role": "system", "content": "你只输出合法 JSON。"},
-             {"role": "user", "content": prompts.load("feynman_gaps.md").format(
-                 kp_title=kp.get("title", kp["kp_id"]), transcript=lines)}],
+             {"role": "user", "content": user_prompt}],
             temperature=0.2, max_tokens=800, caller="feynman_gaps",
         )
         start, end = raw.find("{"), raw.rfind("}")
@@ -120,7 +152,7 @@ def feynman_round(user_id: str, kp_id: str, course: str = "python",
 
             # 教练追问（最后总结前不再追问）
             if len(transcript) // 2 < max_rounds - 1:
-                coach = generate_followup(kp, transcript)
+                coach = generate_followup(kp, transcript, user_id, db_path)
                 print(f"\n[教练] {coach}")
                 transcript.append({"role": "assistant", "content": coach})
     except model.ModelError as e:
@@ -129,7 +161,7 @@ def feynman_round(user_id: str, kp_id: str, course: str = "python",
         return {"transcript": transcript, "gaps": ["API 不可用，未完成追问"]}
 
     # 总结盲点
-    gaps = summarize_gaps(kp, transcript)
+    gaps = summarize_gaps(kp, transcript, user_id, db_path)
     if transcript:
         _update_kp_after_explain(user_id, kp, db_path)
     return {"transcript": transcript, "gaps": gaps}
