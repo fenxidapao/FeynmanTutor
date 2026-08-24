@@ -17,6 +17,7 @@ import db
 import model
 import prompts
 import rag
+from agents import context
 
 # 费曼各环节 prompt 已版本化：prompts/feynman_*.md（D3，PLAN 17.2）
 
@@ -78,16 +79,19 @@ def explain_kp(user_id: str, kp_id: str, course: str = "python",
 
 
 def generate_followup(kp: dict, transcript: list[dict], user_id: str | None = None,
-                      db_path: str | None = None) -> str:
+                      db_path: str | None = None, summary: str = "") -> str:
     """基于已有对话生成教练的下一轮提问。
 
     user_id 传入时注入历史画像（E5 跨会话记忆），让追问针对学生已知薄弱点。
+    summary 非空 = 增量压缩结果（②Context：摘要 + 最近原文，由调用方缓存复用）。
     """
-    lines = "\n".join(f"{'学生' if t['role'] == 'user' else '教练'}: {t['content']}"
-                      for t in transcript)
+    # ②Context 长对话压缩：超阈值时自动压缩旧轮次（增量压缩路径复用 summary）
+    if not summary and context.should_compress(transcript):
+        summary = context.compress_old(transcript, user_id, db_path)
+    lines = context.render_transcript(transcript, summary=summary) or "（刚开始）"
     memory = profile_context(user_id, db_path) if user_id else ""
     user_prompt = prompts.load("feynman_followup.md").format(
-        kp_title=kp.get("title", kp["kp_id"]), transcript=lines or "（刚开始）")
+        kp_title=kp.get("title", kp["kp_id"]), transcript=lines)
     if memory:
         user_prompt += f"\n\n参考背景：{memory}"
     raw = model.chat(
@@ -99,12 +103,13 @@ def generate_followup(kp: dict, transcript: list[dict], user_id: str | None = No
 
 
 def summarize_gaps(kp: dict, transcript: list[dict], user_id: str | None = None,
-                   db_path: str | None = None) -> list[str]:
+                   db_path: str | None = None, summary: str = "") -> list[str]:
     """3 轮后总结盲点。"""
     if not transcript:
         return []
-    lines = "\n".join(f"{'学生' if t['role'] == 'user' else '教练'}: {t['content']}"
-                      for t in transcript)
+    if not summary and context.should_compress(transcript):
+        summary = context.compress_old(transcript, user_id, db_path)
+    lines = context.render_transcript(transcript, summary=summary)
     memory = profile_context(user_id, db_path) if user_id else ""
     user_prompt = prompts.load("feynman_gaps.md").format(
         kp_title=kp.get("title", kp["kp_id"]), transcript=lines)
@@ -137,6 +142,7 @@ def feynman_round(user_id: str, kp_id: str, course: str = "python",
     graph = _load_graph(course)
     kp = graph["_by_id"][kp_id]
     transcript: list[dict] = []
+    summary = ""  # ②Context 增量压缩：只压一次，后续轮次复用
 
     try:
         for _ in range(max_rounds):
@@ -152,7 +158,10 @@ def feynman_round(user_id: str, kp_id: str, course: str = "python",
 
             # 教练追问（最后总结前不再追问）
             if len(transcript) // 2 < max_rounds - 1:
-                coach = generate_followup(kp, transcript, user_id, db_path)
+                if not summary and context.should_compress(transcript):
+                    summary = context.compress_old(transcript, user_id, db_path)
+                coach = generate_followup(kp, transcript, user_id, db_path,
+                                          summary=summary)
                 print(f"\n[教练] {coach}")
                 transcript.append({"role": "assistant", "content": coach})
     except model.ModelError as e:
@@ -161,7 +170,7 @@ def feynman_round(user_id: str, kp_id: str, course: str = "python",
         return {"transcript": transcript, "gaps": ["API 不可用，未完成追问"]}
 
     # 总结盲点
-    gaps = summarize_gaps(kp, transcript, user_id, db_path)
+    gaps = summarize_gaps(kp, transcript, user_id, db_path, summary=summary)
     if transcript:
         _update_kp_after_explain(user_id, kp, db_path)
     return {"transcript": transcript, "gaps": gaps}

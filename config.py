@@ -51,6 +51,12 @@ REFLOW_MAX_ROUNDS = int(os.environ.get("REFLOW_MAX_ROUNDS", "2"))
 # E3 每日学习队列上限（知识点数；配额是 LLM 次数，不宜直接当队列长度）
 DAILY_QUEUE_LIMIT = int(os.environ.get("DAILY_QUEUE_LIMIT", "5"))
 
+# ---------- ②Context 长对话压缩（9 步框架，PLAN 21 Pi 双层循环预留） ----------
+# 费曼 transcript 超过该条数 → 触发压缩（3 轮=6 条不触发，双层循环轮数增长后生效）
+CONTEXT_COMPRESS_AFTER = int(os.environ.get("CONTEXT_COMPRESS_AFTER", "8"))
+# 压缩时保留原文的最近消息条数（追问需要最近的上下文）
+CONTEXT_RAW_TAIL = int(os.environ.get("CONTEXT_RAW_TAIL", "4"))
+
 
 def load_dotenv(path: str | None = None) -> None:
     """极简 .env 加载：只读 KEY=VALUE 行，不覆盖已存在的环境变量。"""

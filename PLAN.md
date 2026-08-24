@@ -485,6 +485,7 @@ python main.py --report python --user u0         # 出效果报告
 - [x] **D 阶段(工程补强,2026-08-24 完成)**:LLM eval 黄金集(scripts/eval_llm.py,check 免费 CI+live 按需,live 7/7)/ Playwright E2E(scripts/e2e_flow.py 系统 Edge 实测通过 + tests/test_e2e_flow.py 进 CI)/ prompt 版本化(prompts/ 8 md)/ session trace——77 测试全绿
 - [x] **E 阶段(Loop 工程化,2026-08-24 完成,101 测试全绿)**:见第 20 章——E1 学习回流闭环 / E2 练习策略切换 / E3 掌握度驱动学习队列;配套:analyze_experiment.py 改取第一条后测(防回流刷分污染)+ reflow 统计、前端回流卡片+队列进度条;git 待提交
 - [x] **E5 Memory 动态画像(2026-08-24,9 步框架⑤Memory,110 测试全绿)**:log_exercise 后规则增量维护 weak_points(答错追加 {kp_id,reason,evidence:[ex_id]}、答对且 mastery≥0.8 移除)+ feynman.generate_followup/summarize_gaps 注入历史画像(profile_context 跨会话记忆,新会话免重诊断);tests/test_memory.py 9 测
+- [x] **②Context 长对话压缩(2026-08-24,9 步框架②Context,118 测试全绿)**:agents/context.py——费曼 transcript 超 8 条自动压缩(旧轮 LLM 摘要 + 最近 4 条原文,失败规则兜底);generate_followup/summarize_gaps 接入,CLI feynman_round 增量压缩(只压一次复用 summary);当前 3 轮=6 条不触发(零行为变化),为 PLAN 21 Pi 双层循环预留;tests/test_context.py 8 测
 - [ ] **低优先(按需)**:贡献热力图(观感) / TS 学习包(用户未学 TS,node 沙箱新机制) / 爬合规语料(廖雪峰更多章节、Python 官方文档中文版 PSF,现有 notes 够用则不做) / vision-exp(有下线风险,仅需看图时启用)
 
 ### 交接文档(2026-08-23 新增,新窗口必读)
@@ -721,7 +722,7 @@ TS 学习包(用户未学 TS,node 沙箱新机制,判题差异化已由 SQL 完�
 
 | Pi 设计 | 本项目对应改造 | 优先级 |
 |---|---|---|
-| 双层循环:内层 turn loop + 外层 follow-up loop | 费曼改"内层追问 + 外层直到盲点消除" | E 阶段后续 |
+| 双层循环:内层 turn loop + 外层 follow-up loop | 费曼改"内层追问 + 外层直到盲点消除" | E 阶段后续(②Context 压缩已就绪:agents/context.py,轮数增长不炸 prompt) |
 | 工具 hook(beforeToolCall/afterToolCall 插权限/日志/缓存) | 判题前插配额检查/策略切换(E2) | E 阶段 |
 | 事件订阅(agent_start/turn_start/tool_execution...) | Web 加 SSE 流式输出 + 前端实时状态 | 低 |
 | Session Tree(JSONL 分支/回退,像 git) | 学习会话支持回退/分支(实验数据可回溯) | 低 |
