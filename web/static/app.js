@@ -30,7 +30,12 @@
   }
 
   // C1：登录态携带（GET 加 query / POST 加 body 字段 session_id）
-  function sessQuery() { return state.session ? `&session_id=${encodeURIComponent(state.session)}` : ""; }
+  function sessUrl(base) {
+    // 自动判断分隔符：base 已有 query 用 &，否则用 ?（避免拼出 /user&session_id 的 bug）
+    return state.session
+      ? `${base}${base.includes("?") ? "&" : "?"}session_id=${encodeURIComponent(state.session)}`
+      : base;
+  }
   function sessBody(b = {}) {
     if (state.session) b.session_id = state.session;
     return b;
@@ -83,7 +88,7 @@
     const box = $(boxSel);
     box.innerHTML = "<p class='hint'>加载中…</p>";
     state.quizStart = Date.now();  // C1：计时作弊检测
-    const qs = await api(`/api/quiz/${state.course}/${kind}?user_id=${state.user}${sessQuery()}`);
+    const qs = await api(sessUrl(`/api/quiz/${state.course}/${kind}?user_id=${state.user}`));
     if (!qs.length) { box.innerHTML = "<p class='hint'>无题目</p>"; return; }
     box.innerHTML = "";
     qs.forEach((q, i) => {
@@ -246,7 +251,7 @@
     card.className = "card";
     card.innerHTML = "<h3>标准讲解</h3><div id='explainText' class='hint'>加载中…</div>";
     box.appendChild(card);
-    const r = await api(`/api/explain/${state.course}/${state.feyman.kpId}?user_id=${state.user}${sessQuery()}`);
+    const r = await api(sessUrl(`/api/explain/${state.course}/${state.feyman.kpId}?user_id=${state.user}`));
     $("#explainText").textContent = r.explanation;
     // 接着练习
     const pBtn = document.createElement("button");
@@ -322,7 +327,7 @@
     const box = $("#reportBox");
     box.innerHTML = "<p class='hint'>加载中…</p>";
     try {
-      const r = await api(`/api/report/${state.course}/${state.user}${sessQuery()}`);
+      const r = await api(sessUrl(`/api/report/${state.course}/${state.user}`));
       if (r.pre == null && r.post == null) {
         box.innerHTML = "<p class='hint'>还没有前后测数据，先跑前测和后测。</p>";
         $("#reportChartBox").style.display = "none";
@@ -380,7 +385,7 @@
 
   /* ---------------- 热力图 ---------------- */
   async function loadHeatmap() {
-    const d = await api(`/api/heatmap/${state.user}${sessQuery()}`);
+    const d = await api(sessUrl(`/api/heatmap/${state.user}`));
     const labels = d.cells.map(c => c.title);
     const data = d.cells.map(c => c.mastery);
     const colors = d.cells.map(c => {
