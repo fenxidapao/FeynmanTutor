@@ -481,7 +481,8 @@ python main.py --report python --user u0         # 出效果报告
 - [x] **B 阶段(2026-08-23 下午)**:报告前后测对比柱状图 + 可检查记忆(weak_points 带证据链) + 掌握门槛(blocked) + Python 包 40 题补 explanation + 薄弱点按章节过滤——66 测试全绿,详见 HANDOVER-2026-08-23-B.md
 - [x] **可观测性(2026-08-23 傍晚)**:LLM 调用日志(llm_logs 表 + `--usage` 命令,按环节聚合 token/耗时)——PLAN 8"多 Agent 效率"评估项落地;GitHub 发布(fenxidapao/FeynmanTutor);前端 weak_points 渲染修复——66 测试全绿,详见 HANDOVER-2026-08-23-B.md
 - [~] **C 阶段(进行中)**:C0 地基 ✅（requirements/.env.example/.dockerignore/Dockerfile/compose/CI/health 端点）+ C1 实验工程化 ✅（注册登录/session 隔离/每日配额+全局熔断/mode 服务端强制/EXPERIMENT.md/analyze_experiment.py/答题耗时作弊检测）——73 测试全绿（66+7），2026-08-23 晚落地；**剩余 C2：拉不熟 Python 同学 n≥20 分两批**（先 10 人验证流程再补到 20）
-- [ ] **D 阶段(工程补强,穿插 C 阶段)**:LLM eval 黄金集(第 17.3 节 rubric)/ Playwright E2E / prompt 版本化 / session trace——各 0.5 天
+- [x] **D 阶段(工程补强,2026-08-24 完成)**:LLM eval 黄金集(scripts/eval_llm.py,check 免费 CI+live 按需,live 7/7)/ Playwright E2E(scripts/e2e_flow.py 系统 Edge 实测通过 + tests/test_e2e_flow.py 进 CI)/ prompt 版本化(prompts/ 8 md)/ session trace——77 测试全绿
+- [ ] **E 阶段(Loop 工程化,2026-08-24 新增)**:见第 20 章——E1 学习回流闭环 / E2 练习策略切换 / E3 掌握度驱动学习队列——接 C2 之后或穿插 C2
 - [ ] **低优先(按需)**:贡献热力图(观感) / TS 学习包(用户未学 TS,node 沙箱新机制) / 爬合规语料(廖雪峰更多章节、Python 官方文档中文版 PSF,现有 notes 够用则不做) / vision-exp(有下线风险,仅需看图时启用)
 
 ### 交接文档(2026-08-23 新增,新窗口必读)
@@ -644,4 +645,72 @@ TS 学习包(用户未学 TS,node 沙箱新机制,判题差异化已由 SQL 完�
 - [ ] 容器 `docker compose restart` 后数据不丢(卷持久化验证)
 - [ ] 未登录访问 API 返回 401,不是数据
 - [ ] 同账号连续调用触达配额返回 429 友好文案
+
+---
+
+## 20. E 阶段:Loop 工程化(2026-08-24 定稿)
+
+### 20.1 概念依据与现状诊断
+
+> 行业框架(Harness/Loop/Graph,Anthropic + LangChain 2026):
+> - **Harness(辔头)** = 模型之外的一切脚手架:工具/权限/沙箱/校验/日志/预算。**Agent = Model + Harness**。
+> - **Loop(循环)** = 迭代验证:目标 → 尝试 → **外部验证**(非 LLM 自评)→ 重试/停止。三要素:目标、外部验证、停止条件。
+> - 教训:让 AI 自评会重复盲点;无停止条件的重试会烧钱。
+
+**我们现状**:Harness 完备(沙箱 5s/64KB + 规则判题=外部验证 + 四级降级 + 配额 + session trace + D1 eval);
+**Loop 是短板**——当前是"链式流水线"(前测→诊断→费曼→练习→后测),无迭代验证循环:
+- 费曼 3 轮是固定轮数(无"盲点消除"验证停止);
+- 练习失败无策略切换(同一题错 3 次仍是同一 hint);
+- 后测不及格无回流(学完就结束,不修正)。
+
+### 20.2 E1 学习回流闭环(check-and-retry loop,最高优先)
+
+- **行为**:后测正确率 < 阈值(如 0.6)且提升不足 → 系统自动判定薄弱点(来自 weak_points)→ 生成**回流学习任务**(该薄弱点 → 重新讲解/练习)→ 用户完成后可**重测后测**。
+- **外部验证**:回流是否达标 = 重测后测分数(不是 LLM 自评),达标才标记闭环完成;不达标继续回流(上限 2 轮,防无限循环)。
+- **数据支撑**:已有 assessments(mode/score)、weak_points(证据链)、exercise_logs、mastery——零新表或仅加回流记录表。
+- **教育意义**:行业失败模式"mastery 不累积,每次会话从零开始"的反面——这是简历最可讲的点("loop engineering 落地:后测驱动的学习回流闭环")。
+
+### 20.3 E2 练习策略切换(duplicate-failure detection)
+
+- **行为**:同一知识点连续失败 ≥2 次 → 教学策略降级:提示(hint)→ 标准讲解+对比举例(explain)→ 建议复习前置知识点(prerequisites 已在图谱)。
+- **外部验证**:切换后该题是否答对(规则判题)。
+- **实现**:`hint_only()` 调用点加"该 kp 最近 2 次失败"检查,feynman.py 已有 upsert_kp 状态可查 correct_count/last_practiced。
+- **防烧钱**:策略切换是降级不是无限重试,2 次后必须换教学方式。
+
+### 20.4 E3 掌握度驱动学习队列(SM-2 + mastery 联动)
+
+- **行为**:每日学习队列 = 到期复习(SM-2 next_review ≤ 今天)+ mastery < 0.8 的知识点(按 mastery 升序),学完一个自动推进下一个,直到队列清空或达到当日学习上限(复用配额)。
+- **数据支撑**:knowledge_points.next_review/mastery 已有,零新表。
+- **价值**:把"被动浏览知识点"变成"系统按掌握度排学习顺序",和 E1 回流共用同一队列数据结构。
+
+### 20.5 实现与验证
+
+- 顺序:E1 → E2 → E3(共用回流/队列基础设施,每步 0.5-1 天,总计 1.5-2 天)。
+- 测试:规则层全可单测(回流判定/策略切换阈值/队列排序);LLM 层复用 D1 eval 回归。
+- 前端:回流任务卡片("继续学习"引导)+ 队列进度条,改动小。
+- 实验价值:回流/切换行为会写入 llm_logs/exercise_logs,C 阶段 analyze 脚本可直接统计"回流后重测提升"作为次要以程指标。
+- 可选偷设计(参考 Pi Agent SDK,见 21 节):费曼双层循环(内层追问 + 外层直到盲点消除)归入 E 阶段后续。
+
+---
+
+## 21. Pi Agent SDK 架构参考(2026-08-24 调研,不采用,偷设计)
+
+> 来源:badlogic/pi-mono(MIT,TS,Mario Zechner/OpenClaw 内核,18 万 star 项目驱动)+ roman.pt 实测拆解
+> 结论:**不采用**(编码 Agent 场景工具集不同 + TS 栈不符),但架构是生产级 Agent 运行时的最佳参考范本。
+
+### 值得偷的设计(与本项目对应)
+
+| Pi 设计 | 本项目对应改造 | 优先级 |
+|---|---|---|
+| 双层循环:内层 turn loop + 外层 follow-up loop | 费曼改"内层追问 + 外层直到盲点消除" | E 阶段后续 |
+| 工具 hook(beforeToolCall/afterToolCall 插权限/日志/缓存) | 判题前插配额检查/策略切换(E2) | E 阶段 |
+| 事件订阅(agent_start/turn_start/tool_execution...) | Web 加 SSE 流式输出 + 前端实时状态 | 低 |
+| Session Tree(JSONL 分支/回退,像 git) | 学习会话支持回退/分支(实验数据可回溯) | 低 |
+| 渐进式工具加载(拒绝 MCP,system prompt 仅 ~800 token) | 我们 prompt 已版本化且精简,可继续压缩 | 低 |
+
+### 与我们思路一致的印证(面试可引用)
+- "**Agent = Model + Harness**",模型不是变量,脚手架决定可靠性——我们 harness(沙箱/规则判题/配额/trace/eval)已按此思路落地大半;
+- 工具越少越好(4 原子工具)——我们"判题规则化 + LLM 只做讲解/诊断"同哲学;
+- 验证必须外部化(不能自评)——我们规则判题 + D1 eval 一致。
+- 短板呼应:Pi 的 loop 是核心引擎,我们 loop 缺(E 阶段补)。
 ```
