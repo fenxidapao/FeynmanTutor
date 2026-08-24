@@ -27,7 +27,7 @@ import grader  # noqa: E402
 import learning_pack  # noqa: E402
 import model  # noqa: E402
 import sandbox  # noqa: E402
-from agents import assessor, diagnostic, feynman, planner, recommender  # noqa: E402
+from agents import assessor, diagnostic, feynman, loop, planner, recommender  # noqa: E402
 
 app = FastAPI(title="FeynmanTutor", description="基于费曼学习法的个性化学习 Agent")
 app.add_middleware(
@@ -221,18 +221,29 @@ def api_quiz_submit(course: str, kind: str,
 
     correct = 0
     details = []
+    wrong_kps = []
     for q in qs:
         ans = answers.get(q["ex_id"], "")
         ok, msg = grader.grade(q, ans)
         if ok:
             correct += 1
+        else:
+            kp_id = q.get("kp_id")
+            if kp_id and kp_id not in wrong_kps:
+                wrong_kps.append(kp_id)
         db.log_exercise(user_id, q["ex_id"], q.get("kp_id", ""), ok, ans, msg)
         details.append({"ex_id": q["ex_id"], "correct": ok, "feedback": msg})
 
     score = correct / len(qs) if qs else 0.0
     db.record_assessment(user_id, chapter or "all", kind, mode, score, len(qs),
                          elapsed_seconds=payload.get("elapsed_seconds"))
-    return {"score": score, "correct": correct, "total": len(qs), "details": details}
+    # E1 学习回流（PLAN 20.2）：后测提交后驱动回流状态机（外部验证=重测分数）
+    reflow = None
+    if kind == "posttest":
+        reflow = loop.reflow_after_posttest(user_id, chapter or "all", score,
+                                            wrong_kps)
+    return {"score": score, "correct": correct, "total": len(qs),
+            "details": details, "reflow": reflow}
 
 
 # ==================== 练习判题 ====================
@@ -264,8 +275,14 @@ def api_grade(payload: dict):
         raise HTTPException(404, f"题目不存在: {ex_id}")
     ok, msg = grader.grade(ex, answer)
     db.log_exercise(user_id, ex_id, ex.get("kp_id", ""), ok, answer, msg)
-    return {"correct": ok, "feedback": msg, "ex_id": ex_id,
-            "explanation": ex.get("explanation", "")}
+    # E2 练习策略切换（PLAN 20.3）：按该 kp 连续失败次数降级 hint→explain→prereq
+    strategy = loop.practice_strategy(user_id, ex.get("kp_id", "")) if ex.get("kp_id") else "hint"
+    resp = {"correct": ok, "feedback": msg, "ex_id": ex_id,
+            "explanation": ex.get("explanation", ""),
+            "strategy": strategy}
+    if strategy == "prereq":
+        resp["prereq_titles"] = loop.prereq_titles(ex["kp_id"])
+    return resp
 
 
 def _find_exercise(ex_id: str) -> dict | None:
@@ -346,6 +363,23 @@ def api_recommend(course: str, user_id: str, top_n: int = 5,
                   session_id: str = Query(None)):
     uid = _start_req(session_id, user_id)
     return recommender.recommend(uid, course, top_n=top_n)
+
+
+# ==================== E 阶段：回流 / 学习队列（PLAN 20） ====================
+
+@app.get("/api/reflow/{course}/{user_id}")
+def api_reflow(course: str, user_id: str, session_id: str = Query(None)):
+    """回流状态（报告页/首页"继续学习"卡片）：是否在回流、第几轮、薄弱点清单。纯查询。"""
+    uid = _start_req(session_id, user_id)
+    return loop.reflow_status(uid, None)
+
+
+@app.get("/api/queue/{course}/{user_id}")
+def api_queue(course: str, user_id: str, session_id: str = Query(None)):
+    """今日学习队列（E3 掌握度驱动）：到期复习优先 + 已学未掌握按 mastery 升序。纯查询。"""
+    uid = _start_req(session_id, user_id)
+    return {"course": course, "queue": loop.daily_queue(uid, course),
+            "limit": config.DAILY_QUEUE_LIMIT}
 
 
 # ==================== 报告 / 画像 ====================

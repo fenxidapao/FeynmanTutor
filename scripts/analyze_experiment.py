@@ -19,6 +19,17 @@ def _latest(rows, kind: str):
     return got[-1] if got else None
 
 
+def _first(rows, kind: str):
+    """该用户 kind 的第一条测评。
+
+    E1 学习回流（PLAN 20.2）会给同一用户追加多条 posttest 记录——
+    组间对照必须取**第一条**（教学完成后的首次测量），回流重测单独统计，
+    否则回流刷分会污染"费曼 vs 讲解"的对照数据。
+    """
+    got = [r for r in rows if r["kind"] == kind]
+    return got[0] if got else None
+
+
 def analyze(db_path: str) -> dict:
     users = {u["user_id"]: u for u in db.list_users(db_path)}
     rows_by_user = {}
@@ -27,10 +38,12 @@ def analyze(db_path: str) -> dict:
 
     records = []  # 每个有前后测数据的用户一条
     dropouts = []  # 注册但无 posttest
+    reflow = {"completed": 0, "failed": 0, "given_up": 0, "open": 0,
+              "retest_gains": []}  # E1 回流统计（次要指标，PLAN 20.5）
     for uid, u in users.items():
         rows = rows_by_user[uid]
         pre = _latest(rows, "pretest")
-        post = _latest(rows, "posttest")
+        post = _first(rows, "posttest")  # E1 回流追加 posttest → 取第一条防污染
         if post is None:
             dropouts.append(uid)
             continue
@@ -48,6 +61,12 @@ def analyze(db_path: str) -> dict:
             "elapsed": post.get("elapsed_seconds"),
             "total": post.get("total") or 0,
         })
+        for r in db.list_reflows(uid, db_path):
+            st = r["status"]
+            if st in reflow:
+                reflow[st] += 1
+            if r.get("retest_score") is not None and r.get("trigger_score") is not None:
+                reflow["retest_gains"].append(r["retest_score"] - r["trigger_score"])
 
     def flags(r):
         fl = []
@@ -57,7 +76,8 @@ def analyze(db_path: str) -> dict:
             fl.append("疑似快速作答")
         return fl
 
-    return {"records": records, "dropouts": dropouts, "flags": flags}
+    return {"records": records, "dropouts": dropouts, "flags": flags,
+            "reflow": reflow}
 
 
 def _group_stats(records, include):
@@ -119,6 +139,17 @@ def render(analysis: dict) -> str:
         lines.append(
             f"| {r['user_id']} | {r['group']} | {pre_s} | {r['post']*100:.0f}% | "
             f"{gain_s} | {','.join(f) or ''} |")
+
+    # E1 回流统计（次要指标：回流是闭环验证，不参与组间对照）
+    rf = analysis["reflow"]
+    total_rf = rf["completed"] + rf["failed"] + rf["given_up"] + rf["open"]
+    gains = rf["retest_gains"]
+    gains_s = (f"{sum(gains)/len(gains)*100:+.1f}pp" if gains else "-")
+    lines += ["", "## 回流统计（E1 Loop 工程化，PLAN 20.5）", "",
+              f"- 回流任务：{total_rf} 个（完成 {rf['completed']} / 续轮 {rf['failed']} / "
+              f"超轮放弃 {rf['given_up']} / 进行中 {rf['open']}）",
+              f"- 重测较触发时提升均值：{gains_s}（n={len(gains)}）",
+              f"- 注：组间对照取**第一条**后测，回流重测不计入（防刷分污染）"]
     return "\n".join(lines)
 
 

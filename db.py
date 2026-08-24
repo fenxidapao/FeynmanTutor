@@ -94,6 +94,19 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id TEXT NOT NULL,
   created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS reflow_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  chapter TEXT,
+  round INTEGER DEFAULT 1,          -- 回流轮次（1 起，上限 REFLOW_MAX_ROUNDS）
+  trigger_score REAL,               -- 触发回流时的后测正确率
+  weak_kps TEXT,                    -- JSON：薄弱点 kp_id 列表（回流学习任务）
+  status TEXT DEFAULT 'open',       -- open 进行中 / completed 重测达标 / given_up 超轮放弃
+  retest_score REAL,                -- 重测后测正确率（外部验证）
+  created_at TEXT,
+  completed_at TEXT
+);
 """
 
 
@@ -528,6 +541,66 @@ def schedule_next_review(user_id: str, kp_id: str, days: int,
     """SM-2 简化版：间隔天数后复习。P0 先记字段，P2 做闭环。"""
     next_review = (datetime.now() + timedelta(days=days)).date().isoformat()
     upsert_kp(user_id, {"kp_id": kp_id, "next_review": next_review}, db_path)
+
+
+# ==================== E1 学习回流记录（PLAN 20.2） ====================
+
+def open_reflow(user_id: str, chapter: str, trigger_score: float,
+                weak_kps: list[str], round_no: int = 1,
+                db_path: str | None = None) -> dict:
+    """创建回流任务（status=open）。返回该记录 dict。
+
+    round_no 从 1 起；连续不达标时由调用方递增。weak_kps 是回流学习任务清单。
+    """
+    with _conn(db_path) as c:
+        now = datetime.now().isoformat(timespec="seconds")
+        cur = c.execute(
+            "INSERT INTO reflow_logs (user_id, chapter, round, trigger_score, "
+            "weak_kps, status, created_at) VALUES (?,?,?,?,?,'open',?)",
+            (user_id, chapter, round_no, trigger_score,
+             json.dumps(weak_kps, ensure_ascii=False), now),
+        )
+        row = c.execute("SELECT * FROM reflow_logs WHERE id=?",
+                        (cur.lastrowid,)).fetchone()
+        return dict(row)
+
+
+def get_open_reflow(user_id: str, chapter: str | None = None,
+                    db_path: str | None = None) -> dict | None:
+    """最近一条进行中的回流任务（重测提交时判定"这次是重测"的依据）。"""
+    sql = "SELECT * FROM reflow_logs WHERE user_id=? AND status='open'"
+    args: list = [user_id]
+    if chapter:
+        sql += " AND chapter=?"
+        args.append(chapter)
+    sql += " ORDER BY id DESC LIMIT 1"
+    with _conn(db_path) as c:
+        row = c.execute(sql, args).fetchone()
+        return dict(row) if row else None
+
+
+def settle_reflow(reflow_id: int, retest_score: float, status: str,
+                  db_path: str | None = None) -> dict:
+    """结算回流任务：写重测分数与终态（completed / given_up）。"""
+    with _conn(db_path) as c:
+        c.execute(
+            "UPDATE reflow_logs SET retest_score=?, status=?, completed_at=? "
+            "WHERE id=?",
+            (retest_score, status, datetime.now().isoformat(timespec="seconds"),
+             reflow_id),
+        )
+        row = c.execute("SELECT * FROM reflow_logs WHERE id=?", (reflow_id,)).fetchone()
+        return dict(row)
+
+
+def list_reflows(user_id: str, db_path: str | None = None) -> list[dict]:
+    """该用户全部回流记录（E 阶段统计 / C 阶段 analyze 用）。"""
+    with _conn(db_path) as c:
+        rows = c.execute(
+            "SELECT * FROM reflow_logs WHERE user_id=? ORDER BY id",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def log_llm_call(caller: str, model: str, prompt_tokens: int,

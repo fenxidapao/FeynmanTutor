@@ -146,3 +146,97 @@ def test_register_and_group():
         c.execute("UPDATE users SET group_name='feynman' WHERE user_id=?", (uid,))
     users = client.get("/api/users").json()
     assert any(u["user_id"] == uid and u["group_name"] == "feynman" for u in users)
+
+
+# ==================== E 阶段 Loop 工程化（PLAN 20） ====================
+
+
+def _reset_user(user):
+    """清空某用户的业务数据（保证测试幂等，防真实库污染）。"""
+    import db
+    db.get_user(user)
+    with db._conn() as c:
+        for t in ("assessments", "exercise_logs", "knowledge_points", "profile",
+                  "reflow_logs"):
+            c.execute(f"DELETE FROM {t} WHERE user_id=?", (user,))
+
+
+def test_posttest_triggers_reflow_and_retest_completes():
+    """E1：后测不达标 → 生成回流；重测达标 → 闭环完成。全走 API。"""
+    import db
+    import learning_pack
+
+    user = "u_api_loop"
+    _reset_user(user)
+    pre = learning_pack.load_pretest()
+    post = learning_pack.load_posttest()
+    right_pre = {q["ex_id"]: str(q["check"]["answer"]) for q in pre}
+    right_post = {q["ex_id"]: str(q["check"]["answer"]) for q in post}
+    wrong = {q["ex_id"]: "999" for q in post}
+
+    # 前测全对（score=1.0）→ 后测全错（0.0）→ 提升 -100pp，触发回流
+    client.post("/api/quiz/python/pretest/submit",
+                json={"user_id": user, "answers": right_pre, "mode": "feynman"})
+    r = client.post("/api/quiz/python/posttest/submit",
+                    json={"user_id": user, "answers": wrong, "mode": "feynman"})
+    assert r.status_code == 200
+    rf = r.json()["reflow"]
+    assert rf["triggered"] is True
+    assert rf["round"] == 1
+    assert rf["weak_kps"]  # 后测答错的知识点即回流任务
+
+    # 回流状态：active，有薄弱点
+    s = client.get(f"/api/reflow/python/{user}").json()
+    assert s["active"] is True
+    assert s["round"] == 1
+    assert s["weak_kps"]
+
+    # 重测全对（达标）→ 闭环完成
+    r2 = client.post("/api/quiz/python/posttest/submit",
+                     json={"user_id": user, "answers": right_post, "mode": "feynman"})
+    rf2 = r2.json()["reflow"]
+    assert rf2["passed"] is True
+    s2 = client.get(f"/api/reflow/python/{user}").json()
+    assert s2["active"] is False
+    assert s2["last_status"] == "completed"
+
+
+def test_grade_returns_strategy_escalation():
+    """E2：同一 kp 连续失败 → /api/grade 返回降级策略（explain/prereq）。"""
+    import db
+    import learning_pack
+
+    user = "u_api_strat"
+    _reset_user(user)
+    # 选一个有前置知识点的 kp 的 mcq 题（prereq 策略才有前置可建议）
+    graph = learning_pack.load_graph()
+    kp_with_prereq = next(
+        kp["kp_id"] for kp in graph["knowledge_points"] if kp.get("prerequisites"))
+    ex = next(e for e in learning_pack.load_exercises()
+              if e["type"] == "mcq" and e.get("kp_id") == kp_with_prereq)
+    wrong = "999"
+    r1 = client.post("/api/grade",
+                     json={"user_id": user, "ex_id": ex["ex_id"], "answer": wrong})
+    assert r1.json()["strategy"] == "hint"
+    r2 = client.post("/api/grade",
+                     json={"user_id": user, "ex_id": ex["ex_id"], "answer": wrong})
+    assert r2.json()["strategy"] == "explain"
+    r3 = client.post("/api/grade",
+                     json={"user_id": user, "ex_id": ex["ex_id"], "answer": wrong})
+    assert r3.json()["strategy"] == "prereq"
+    assert r3.json().get("prereq_titles")  # 前置知识点建议
+
+
+def test_queue_endpoint_returns_weak_kps():
+    """E3：答错过的知识点进今日队列（按掌握度排序）。"""
+    import db
+    import learning_pack
+
+    user = "u_api_queue"
+    _reset_user(user)
+    ex = next(e for e in learning_pack.load_exercises() if e["type"] == "mcq")
+    client.post("/api/grade",
+                json={"user_id": user, "ex_id": ex["ex_id"], "answer": "999"})
+    d = client.get(f"/api/queue/python/{user}").json()
+    q = d["queue"]
+    assert any(item["kp_id"] == ex["kp_id"] and item["reason"] == "weak" for item in q)

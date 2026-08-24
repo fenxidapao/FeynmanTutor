@@ -17,7 +17,7 @@ import db
 import learning_pack
 import model
 import sandbox
-from agents import assessor, diagnostic, feynman
+from agents import assessor, diagnostic, feynman, loop
 
 BANNER = r"""
   ______ _                     __  __            ___
@@ -86,13 +86,36 @@ def _learn_flow(user_id: str, course: str, mode: str, chapter: str | None) -> No
         # 4) 练习（该知识点 1-2 题，沙箱判题）
         _practice_kp(user_id, kp, course)
 
-    # 5) 后测（不同题、同知识点、同难度）
-    post_rate = assessor.run_posttest(user_id, chapter, mode, course, ask_user=ask_mcq)
+    # 5) 后测（不同题、同知识点、同难度）+ E1 学习回流（PLAN 20.2）
+    post_rate, wrong_kps = assessor.run_posttest_detail(
+        user_id, chapter, mode, course, ask_user=ask_mcq)
+    _show_reflow(loop.reflow_after_posttest(user_id, chapter or "all",
+                                            post_rate, wrong_kps))
 
     # 6) 报告
     print(assessor.render_report(assessor.report(user_id, chapter)))
     print(f"\n[完成] 前测 {pre_rate * 100:.0f}% → 后测 {post_rate * 100:.0f}%"
           f"（提升 {(post_rate - pre_rate) * 100:+.1f}pp）")
+
+
+def _show_reflow(r: dict) -> None:
+    """渲染 E1 回流状态（CLI 版"继续学习"引导）。"""
+    if not r["triggered"]:
+        return
+    if r.get("passed"):
+        print(f"\n[回流] 重测达标 {r['reflow']['retest_score'] * 100:.0f}%"
+              f"（≥{r['pass_score'] * 100:.0f}%），学习闭环完成 ✅")
+    elif r.get("gave_up"):
+        print(f"\n[回流] 已达上限 {r['max_rounds']} 轮仍未达标。"
+              "建议换个时间再学，或带着错题向老师/同学求助。")
+    elif r.get("passed") is None:
+        print(f"\n[回流] 后测未达标，已生成第 {r['round']} 轮回流学习任务：")
+        for kp in r["weak_kps"]:
+            print(f"  - {kp}")
+        print(f"  重新学习薄弱点后重测后测（达标线 {r['pass_score'] * 100:.0f}%）。")
+    else:
+        print(f"\n[回流] 重测未达标，进入第 {r['round']} 轮："
+              f"重新学习薄弱点（{', '.join(r['weak_kps']) or '全部'}）后重测。")
 
 
 def _practice_kp(user_id: str, kp: dict, course: str) -> None:
@@ -118,10 +141,20 @@ def _practice_kp(user_id: str, kp: dict, course: str) -> None:
             if ok:
                 break
             if attempts < 3:
-                if ex.get("explanation"):
-                    print(f"📖 考点: {ex['explanation']}")
-                hint = feynman.hint_only(ex, {"user_answer": answer, "feedback": msg})
-                print(f"💡 提示: {hint}")
+                # E2 练习策略切换（PLAN 20.3）：连续失败 → hint→讲解→前置复习
+                strategy = loop.practice_strategy(user_id, kp["kp_id"])
+                if strategy == "prereq":
+                    prereqs = loop.prereq_titles(kp["kp_id"], course)
+                    print("📚 连续多次失败：先复习前置知识点再回来——"
+                          + (", ".join(prereqs) if prereqs else "（图谱无前置）"))
+                elif strategy == "explain":
+                    print("📖 连续失败 2 次：先看标准讲解和对比举例：")
+                    print(feynman.explain_kp(user_id, kp["kp_id"], course))
+                else:
+                    if ex.get("explanation"):
+                        print(f"📖 考点: {ex['explanation']}")
+                    hint = feynman.hint_only(ex, {"user_answer": answer, "feedback": msg})
+                    print(f"💡 提示: {hint}")
         else:
             print("[练习] 3 次未通过，讲解已给，建议先复习知识点再回来。")
         # 每题最多试 3 次，做下一题
@@ -230,6 +263,22 @@ def cmd_review(args) -> None:
         print(f"下次复习最早在 {soonest} 天后，建议到时再跑 --review。")
 
 
+def cmd_queue(args) -> None:
+    """今日学习队列（E3 掌握度驱动，PLAN 20.4）：到期复习优先 + 未掌握按 mastery 升序。"""
+    q = loop.daily_queue(args.user, args.course)
+    if not q:
+        print("今日队列为空：没有到期复习，也没有已学未掌握的知识点。去学新内容吧。")
+        return
+    print(f"\n===== 今日学习队列（{len(q)} 个知识点）=====")
+    for i, item in enumerate(q, 1):
+        if item["reason"] == "review":
+            tag = f"到期复习（{item['next_review']}）"
+        else:
+            tag = f"掌握度 {item['mastery']:.0%}"
+        print(f"  {i}. [{tag}] {item['title']}（{item['kp_id']}）")
+    print("\n学完一个自动推进下一个，直到队列清空。")
+
+
 def cmd_usage() -> None:
     """LLM 调用统计（PLAN 8 多 Agent 效率评估）：按环节聚合 token/耗时。"""
     s = db.llm_stats()
@@ -294,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="把用户分到实验组（P1+ 组间对照）")
     parser.add_argument("--users", action="store_true", help="列出全部用户与分组")
     parser.add_argument("--review", action="store_true", help="间隔复习（P2：到期知识点复习）")
+    parser.add_argument("--queue", action="store_true", help="今日学习队列（E3：到期复习+未掌握，按掌握度排序）")
     parser.add_argument("--usage", action="store_true", help="LLM 调用统计（token/耗时，按环节）")
     parser.add_argument("--health", action="store_true", help="环境自检")
     parser.add_argument("course", nargs="?", default="python", help="学习包（默认 python）")
@@ -335,6 +385,8 @@ def main(argv: list[str] | None = None) -> int:
         cmd_users(args)
     elif args.review:
         cmd_review(args)
+    elif args.queue:
+        cmd_queue(args)
     elif args.usage:
         cmd_usage()
     else:

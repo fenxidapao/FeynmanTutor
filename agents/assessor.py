@@ -10,10 +10,16 @@ import learning_pack
 
 
 def _run_quiz(user_id: str, questions: list[dict], mode: str, kind: str,
-              chapter: str, ask_user, db_path: str | None) -> float:
-    """跑一套题（前测或后测）。ask_user(prompt) -> 用户答案（mcq 传索引）。"""
+              chapter: str, ask_user, db_path: str | None,
+              detail: bool = False) -> float | tuple[float, list[str]]:
+    """跑一套题（前测或后测）。ask_user(prompt) -> 用户答案（mcq 传索引）。
+
+    detail=True 时返回 (正确率, wrong_kps)：答错的知识点 kp_id 列表
+    （E1 回流学习任务清单，PLAN 20.2）。
+    """
     score = 0.0
     total = len(questions)
+    wrong_kps: list[str] = []
     for i, q in enumerate(questions, 1):
         print(f"\n--- {kind} 第 {i}/{total} 题 ---")
         print(q["prompt"])
@@ -24,12 +30,16 @@ def _run_quiz(user_id: str, questions: list[dict], mode: str, kind: str,
         ok, msg = grader.grade(q, ans)
         if ok:
             score += 1.0
+        elif q.get("kp_id") and q["kp_id"] not in wrong_kps:
+            wrong_kps.append(q["kp_id"])
         print(("✅ " if ok else "❌ ") + msg)
         # 记录答题日志（前测不记 kp 关联？记上，画像数据源）
         db.log_exercise(user_id, q["ex_id"], q.get("kp_id", ""), ok, ans, msg,
                         db_path=db_path)
     rate = round(score / total, 2) if total else 0.0
     db.record_assessment(user_id, chapter, kind, mode, rate, total, db_path=db_path)
+    if detail:
+        return rate, wrong_kps
     return rate
 
 
@@ -53,6 +63,18 @@ def run_posttest(user_id: str, chapter: str | None, mode: str,
     print(f"\n===== 后测（{len(questions)} 题，与上次不同的题）=====")
     return _run_quiz(user_id, questions, mode, "posttest", chapter or "all",
                      ask_user, db_path)
+
+
+def run_posttest_detail(user_id: str, chapter: str | None, mode: str,
+                        course: str = "python", ask_user=input,
+                        db_path: str | None = None) -> tuple[float, list[str]]:
+    """后测变体：返回 (正确率, 答错知识点列表)——E1 回流任务清单（PLAN 20.2）。"""
+    questions = learning_pack.load_posttest(course)
+    if chapter:
+        questions = [q for q in questions if q.get("chapter") == chapter]
+    print(f"\n===== 后测（{len(questions)} 题，与上次不同的题）=====")
+    return _run_quiz(user_id, questions, mode, "posttest", chapter or "all",
+                     ask_user, db_path, detail=True)
 
 
 def report(user_id: str, chapter: str | None = None,

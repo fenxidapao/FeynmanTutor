@@ -17,11 +17,12 @@
 >
 > **当前任务(主线)**:C 阶段多人对照实验——"费曼组 vs 讲解组"前后测提升对比,n≥20 分两批(先 10 人验证流程再补到 20)。当前状态:所有工程就绪,只差**开实验通道**(compose 加 EXPERIMENT_AUTH=1 + cloudflared/局域网链接 → 发同学)。
 >
-> **完成情况(2026-08-24,77 测试全绿,git 419916b,容器 localhost:8001 healthy)**:
+> **完成情况(2026-08-24,101 测试全绿,git 待提交,容器 localhost:8001 healthy)**:
 > - P0-P3 学习闭环全通:前测/诊断/费曼/练习/后测/报告/热力图 + 间隔复习(SM-2)+ SQL 学习包 + llm_logs 可观测性
 > - C0 部署地基:Dockerfile+compose(./data 卷持久化)+ GitHub Actions CI + requirements 钉版本 + .env.example + /health
 > - C1 实验工程化:注册/登录(pbkdf2 哈希 + uuid4 session 防串台)、每用户每日配额+全局熔断(429 友好文案)、mode 服务端按 group_name 强制、docs/EXPERIMENT.md、scripts/analyze_experiment.py、答题耗时作弊检测(elapsed_seconds)
 > - D 补强:LLM eval 黄金集(scripts/eval_llm.py,check 免费 CI + live 按需,live 实测 7/7)、Playwright E2E(scripts/e2e_flow.py 用系统 Edge 实测 6 步闭环通过 + tests/test_e2e_flow.py 进 CI)、prompt 版本化(prompts/ 8 个 md)、session trace(llm_logs.session_id)
+> - **E 阶段 Loop 工程化(2026-08-24,101 测试全绿)**:E1 学习回流闭环(后测<0.6 且提升<0.3 → 回流任务 → 重测达标线 0.8,上限 2 轮,reflow_logs 表)+ E2 练习策略切换(连续失败 1/2/3+ 次 → hint/explain/prereq,/api/grade 返回 strategy)+ E3 掌握度学习队列(到期复习优先+mastery 升序,首页进度条)——**analyze_experiment.py 改取第一条后测防回流刷分污染组间对照**(重要!)
 >
 > **可扩展点(未来方向,按 ROI 排序)**:
 > 1. **Loop 工程化(最大短板,最有简历价值)**:后测提升不足→自动回流薄弱点再学再测(check-and-retry loop,外部验证=后测分数);同一知识点练习失败≥2 次→换教学策略(hint→讲解→复习前置);SM-2 到期且 mastery<0.8→自动进学习队列
@@ -482,7 +483,7 @@ python main.py --report python --user u0         # 出效果报告
 - [x] **可观测性(2026-08-23 傍晚)**:LLM 调用日志(llm_logs 表 + `--usage` 命令,按环节聚合 token/耗时)——PLAN 8"多 Agent 效率"评估项落地;GitHub 发布(fenxidapao/FeynmanTutor);前端 weak_points 渲染修复——66 测试全绿,详见 HANDOVER-2026-08-23-B.md
 - [~] **C 阶段(进行中)**:C0 地基 ✅（requirements/.env.example/.dockerignore/Dockerfile/compose/CI/health 端点）+ C1 实验工程化 ✅（注册登录/session 隔离/每日配额+全局熔断/mode 服务端强制/EXPERIMENT.md/analyze_experiment.py/答题耗时作弊检测）——73 测试全绿（66+7），2026-08-23 晚落地；**剩余 C2：拉不熟 Python 同学 n≥20 分两批**（先 10 人验证流程再补到 20）
 - [x] **D 阶段(工程补强,2026-08-24 完成)**:LLM eval 黄金集(scripts/eval_llm.py,check 免费 CI+live 按需,live 7/7)/ Playwright E2E(scripts/e2e_flow.py 系统 Edge 实测通过 + tests/test_e2e_flow.py 进 CI)/ prompt 版本化(prompts/ 8 md)/ session trace——77 测试全绿
-- [ ] **E 阶段(Loop 工程化,2026-08-24 新增)**:见第 20 章——E1 学习回流闭环 / E2 练习策略切换 / E3 掌握度驱动学习队列——接 C2 之后或穿插 C2
+- [x] **E 阶段(Loop 工程化,2026-08-24 完成,101 测试全绿)**:见第 20 章——E1 学习回流闭环 / E2 练习策略切换 / E3 掌握度驱动学习队列;配套:analyze_experiment.py 改取第一条后测(防回流刷分污染)+ reflow 统计、前端回流卡片+队列进度条;git 待提交
 - [ ] **低优先(按需)**:贡献热力图(观感) / TS 学习包(用户未学 TS,node 沙箱新机制) / 爬合规语料(廖雪峰更多章节、Python 官方文档中文版 PSF,现有 notes 够用则不做) / vision-exp(有下线风险,仅需看图时启用)
 
 ### 交接文档(2026-08-23 新增,新窗口必读)
@@ -690,6 +691,23 @@ TS 学习包(用户未学 TS,node 沙箱新机制,判题差异化已由 SQL 完�
 - 前端:回流任务卡片("继续学习"引导)+ 队列进度条,改动小。
 - 实验价值:回流/切换行为会写入 llm_logs/exercise_logs,C 阶段 analyze 脚本可直接统计"回流后重测提升"作为次要以程指标。
 - 可选偷设计(参考 Pi Agent SDK,见 21 节):费曼双层循环(内层追问 + 外层直到盲点消除)归入 E 阶段后续。
+
+### 20.6 实施状态(2026-08-24 完成,101 测试全绿)
+
+| 项 | 实现 | 状态 |
+|---|---|---|
+| E1 回流判定 | `agents/loop.py::needs_reflow`(后测<0.6 且提升<0.3)+ `reflow_after_posttest` 状态机(open→completed/failed→下一轮/given_up) | ✅ |
+| E1 数据模型 | `reflow_logs` 表(round/trigger_score/weak_kps/status/retest_score)+ db CRUD | ✅ |
+| E1 API/CLI/前端 | posttest 提交自动驱动回流;`/api/reflow/{course}/{user_id}`;报告页"继续学习"卡片;CLI `_show_reflow` | ✅ |
+| E2 策略切换 | `practice_strategy`(连续失败 1/2/3+→hint/explain/prereq);`/api/grade` 返回 strategy+prereq_titles;CLI `_practice_kp` 三级降级;前端答错提示 | ✅ |
+| E3 学习队列 | `daily_queue`(到期复习优先+已学未掌握 mastery 升序+limit);`/api/queue`;`--queue` 命令;首页进度条 | ✅ |
+| 实验数据防护 | **analyze_experiment.py 改取第一条 posttest**(E1 回流会追加 posttest,取最近会污染组间对照)+ reflow 统计段 | ✅ |
+| 测试 | tests/test_loop.py 21 测(回流判定/状态机/策略切换/队列排序)+ web API 3 测(回流闭环/strategy 降级/queue) | ✅ 101 全绿 |
+
+**关键设计决策(实现时的取舍,后续窗口注意)**:
+1. **重测同题有记忆效应**:后测每 kp 仅 1 题,重测只能同题——E1 的验证目的不是"效果测量"而是"薄弱点是否补上",达标线 0.8(触发线 0.6),且组间对照取第一条后测,回流重测只作次要指标;
+2. **"提升不足"量化**:后测-前测 < 0.3(起点极低但进步显著如 0.1→0.5 的不强留,防把用户困死在回流里);
+3. **E3 "复用配额"落地**:配额是 LLM 次数,不适合当队列长度,用 DAILY_QUEUE_LIMIT=5(知识点数)代替;
 
 ---
 

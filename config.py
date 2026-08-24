@@ -39,6 +39,18 @@ DAILY_LLM_LIMIT_PER_USER = int(os.environ.get("DAILY_LLM_LIMIT_PER_USER", "50"))
 # 全站每日 LLM 调用总量上限（全局熔断，防单用户/异常刷爆 key）
 GLOBAL_DAILY_LLM_LIMIT = int(os.environ.get("GLOBAL_DAILY_LLM_LIMIT", "300"))
 
+# ---------- E 阶段 Loop 工程化（PLAN 20） ----------
+# E1 学习回流：后测低于此阈值 且 提升不足 → 触发回流（重新学薄弱点后重测）
+REFLOW_THRESHOLD = float(os.environ.get("REFLOW_THRESHOLD", "0.6"))
+# 提升不足的定义：后测 - 前测 < 此值（起点极低但进步显著的不强留）
+REFLOW_MIN_GAIN = float(os.environ.get("REFLOW_MIN_GAIN", "0.3"))
+# 重测后测达标线（薄弱点是否补上的外部验证，非效果测量）
+REFLOW_PASS_SCORE = float(os.environ.get("REFLOW_PASS_SCORE", "0.8"))
+# 回流上限轮数（防无限循环烧钱/拖住用户）
+REFLOW_MAX_ROUNDS = int(os.environ.get("REFLOW_MAX_ROUNDS", "2"))
+# E3 每日学习队列上限（知识点数；配额是 LLM 次数，不宜直接当队列长度）
+DAILY_QUEUE_LIMIT = int(os.environ.get("DAILY_QUEUE_LIMIT", "5"))
+
 
 def load_dotenv(path: str | None = None) -> None:
     """极简 .env 加载：只读 KEY=VALUE 行，不覆盖已存在的环境变量。"""

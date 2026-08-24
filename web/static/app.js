@@ -71,7 +71,7 @@
       $("#userPwd").value = "";
       const g = r.user.group_name ? `（实验组: ${r.user.group_name}）` : "";
       $("#loginHint").textContent = `已登录 ${state.user}${g}`;
-      loadKps(); loadQuiz("pretest", "#pretestBox");
+      loadKps(); loadQuiz("pretest", "#pretestBox"); loadQueue();
     } catch (e) { alert("失败：" + e.message); }
   }
 
@@ -144,6 +144,24 @@
       fb.className = "feedback " + (res.correct / res.total >= 0.6 ? "ok" : "err");
       fb.textContent = `${kind === "pretest" ? "前测" : "后测"}得分：${res.correct}/${res.total}（${Math.round(res.score * 100)}%）`;
       box.appendChild(fb);
+      // E1 学习回流（PLAN 20）：后测提交后若触发回流，就地提示
+      if (kind === "posttest" && res.reflow && res.reflow.triggered) {
+        const rf = document.createElement("div");
+        if (res.reflow.passed) {
+          rf.className = "feedback ok";
+          rf.textContent = `重测达标 ${Math.round(res.reflow.reflow.retest_score * 100)}%（≥${Math.round(res.reflow.pass_score * 100)}%）— 学习闭环完成 ✅`;
+        } else if (res.reflow.gave_up) {
+          rf.className = "feedback err";
+          rf.textContent = `已达回流上限 ${res.reflow.max_rounds} 轮仍未达标，建议带着错题求助后再来。`;
+        } else if (res.reflow.passed === null) {
+          rf.className = "feedback err";
+          rf.textContent = `后测未达标 → 已生成第 ${res.reflow.round} 轮回流任务，去「报告」页继续学习薄弱点。`;
+        } else {
+          rf.className = "feedback err";
+          rf.textContent = `重测未达标 → 进入第 ${res.reflow.round} 轮回流，去「报告」页重新学习。`;
+        }
+        box.appendChild(rf);
+      }
       btn.remove();
       markStepDone(kind === "pretest" ? "pretest" : "posttest");
     } catch (e) {
@@ -308,8 +326,15 @@
         const fb = $(".q-feedback");
         fb.textContent = (res.correct ? "✓ " : "✗ ") + res.feedback;
         fb.className = "q-feedback " + (res.correct ? "ok" : "err");
-        if (!res.correct && res.explanation) {
-          fb.textContent += "\n📖 考点: " + res.explanation;
+        if (!res.correct) {
+          // E2 练习策略切换（PLAN 20.3）：连续失败 → hint → 讲解 → 前置复习
+          if (res.explanation) fb.textContent += "\n📖 考点: " + res.explanation;
+          if (res.strategy === "explain") {
+            fb.textContent += "\n📚 连续失败 2 次：先看标准讲解和对比举例，再回来做题。";
+          } else if (res.strategy === "prereq") {
+            fb.textContent += "\n📚 连续多次失败：先复习前置知识点——" +
+              (res.prereq_titles || []).join("、");
+          }
         }
         if (res.correct) {
           btn.textContent = "下一题 →";
@@ -348,10 +373,66 @@
           <tr><td>薄弱点</td><td>${weak || "<span class='hint'>暂无</span>"}</td></tr>
         </table>`;
       renderReportChart(r.by_chapter || []);
+      // E1 回流卡片（PLAN 20.2）：active=有回流任务在身 → 引导继续学习薄弱点
+      const rf = await api(sessUrl(`/api/reflow/${state.course}/${state.user}`)).catch(() => null);
+      renderReflowCard(rf);
     } catch (e) {
       box.innerHTML = `<div class='feedback err'>报告加载失败：${esc(e.message)}</div>`;
       $("#reportChartBox").style.display = "none";
     }
+  }
+
+  /* E1 回流卡片（"继续学习"引导） */
+  function renderReflowCard(rf) {
+    const box = $("#reflowBox");
+    if (!box) return;
+    if (!rf) { box.classList.add("hidden"); return; }
+    if (rf.active) {
+      const weak = (rf.weak_kps || []).map(id => {
+        const kp = state.kpList.find(k => k.kp_id === id);
+        return `<span class="tag weak">${esc(kp ? kp.title : id)}</span>`;
+      }).join("");
+      box.innerHTML = `
+        <h3>学习回流（第 ${rf.round}/${rf.max_rounds} 轮）<span class="hint">后测未达标，重新学薄弱点</span></h3>
+        <p>薄弱点：${weak || "<span class='hint'>无</span>"}</p>
+        <p class="hint">重测后测达标线 ${Math.round(rf.pass_score * 100)}% · 不达标自动续轮，最多 ${rf.max_rounds} 轮</p>
+        <button class="primary mt" id="btnReflow">继续学习薄弱点 →</button>`;
+      box.classList.remove("hidden");
+      $("#btnReflow").onclick = () => {
+        const first = (rf.weak_kps || [])[0];
+        if (first && state.kpList.some(k => k.kp_id === first)) $("#kpSelect").value = first;
+        switchStep("learn");
+        $("#btnStartKp").click();
+      };
+      return;
+    }
+    const label = ({ completed: "✅ 回流完成，闭环达标", given_up: "⏹ 已达回流上限，本轮结束" })[rf.last_status];
+    if (label) {
+      box.innerHTML = `<h3>学习回流 <span class="hint">${label}</span></h3>`;
+      box.classList.remove("hidden");
+    } else {
+      box.classList.add("hidden");
+    }
+  }
+
+  /* E3 今日学习队列（PLAN 20.4）：到期复习 + 未掌握知识点 */
+  async function loadQueue() {
+    const box = $("#queueBox");
+    if (!box) return;
+    try {
+      const d = await api(sessUrl(`/api/queue/${state.course}/${state.user}`));
+      const q = d.queue || [];
+      if (!q.length) { box.classList.add("hidden"); return; }
+      box.innerHTML = `<h3>今日学习队列 <span class="hint">系统按掌握度排的学习顺序</span></h3>
+        <ol class="queue">${q.map(item => `
+          <li>
+            <span class="q-reason ${item.reason}">${item.reason === "review" ? "复习" : "补弱"}</span>
+            ${esc(item.title)}
+            <span class="hint">${item.reason === "review" ? `到期 ${item.next_review}` : `掌握度 ${Math.round(item.mastery * 100)}%`}</span>
+            ${item.reason === "weak" ? `<div class="q-bar"><i style="width:${Math.round(item.mastery * 100)}%"></i></div>` : ""}
+          </li>`).join("")}</ol>`;
+      box.classList.remove("hidden");
+    } catch (e) { box.classList.add("hidden"); }
   }
 
   function renderReportChart(rows) {
@@ -455,6 +536,7 @@
       renderFeynman();
     };
     await loadKps();
+    loadQueue();
     loadQuiz("pretest", "#pretestBox");
   }
 
