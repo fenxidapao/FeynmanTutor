@@ -9,6 +9,32 @@
 
 ## 0. 开新窗口须知(先读这段)
 
+> **新窗口速览(2026-08-24 21:45 更新,先看这个)**
+>
+> **需求**:写入简历的真实落地 AI Agent 项目,不是玩具——真实用户、真实效果评估、完整工程,可给同学用/发网上(多用户)。
+>
+> **背景**:费曼学习法个性化学习 Agent。你当老师讲→Agent 追问找盲点→建学习画像→定专属路径→沙箱判题硬反馈→前测/后测证明效果。技术栈:Python 3.11 + FastAPI + SQLite,LLM 走 DeepSeek API(urllib 直连,零第三方依赖);语料走外部 CourseRAG(HTTP);**判题纯规则,LLM 只做讲解/诊断/推荐理由**(防漂移)。
+>
+> **当前任务(主线)**:C 阶段多人对照实验——"费曼组 vs 讲解组"前后测提升对比,n≥20 分两批(先 10 人验证流程再补到 20)。当前状态:所有工程就绪,只差**开实验通道**(compose 加 EXPERIMENT_AUTH=1 + cloudflared/局域网链接 → 发同学)。
+>
+> **完成情况(2026-08-24,77 测试全绿,git 419916b,容器 localhost:8001 healthy)**:
+> - P0-P3 学习闭环全通:前测/诊断/费曼/练习/后测/报告/热力图 + 间隔复习(SM-2)+ SQL 学习包 + llm_logs 可观测性
+> - C0 部署地基:Dockerfile+compose(./data 卷持久化)+ GitHub Actions CI + requirements 钉版本 + .env.example + /health
+> - C1 实验工程化:注册/登录(pbkdf2 哈希 + uuid4 session 防串台)、每用户每日配额+全局熔断(429 友好文案)、mode 服务端按 group_name 强制、docs/EXPERIMENT.md、scripts/analyze_experiment.py、答题耗时作弊检测(elapsed_seconds)
+> - D 补强:LLM eval 黄金集(scripts/eval_llm.py,check 免费 CI + live 按需,live 实测 7/7)、Playwright E2E(scripts/e2e_flow.py 用系统 Edge 实测 6 步闭环通过 + tests/test_e2e_flow.py 进 CI)、prompt 版本化(prompts/ 8 个 md)、session trace(llm_logs.session_id)
+>
+> **可扩展点(未来方向,按 ROI 排序)**:
+> 1. **Loop 工程化(最大短板,最有简历价值)**:后测提升不足→自动回流薄弱点再学再测(check-and-retry loop,外部验证=后测分数);同一知识点练习失败≥2 次→换教学策略(hint→讲解→复习前置);SM-2 到期且 mastery<0.8→自动进学习队列
+> 2. **Harness 强化**:工具 hook(判题前插配额/策略检查)、SSE 流式输出、事件订阅(偷 Pi SDK 设计)
+> 3. **动态画像**:诊断从"快照"改"持续更新"(每次练习/讲解后增量更新 weak_points)
+> 4. 语料扩展(TS/数学建模课程)、部署迁云(Render/Railway)、实验二期(n 扩大/多学科)
+>
+> **环境坑(新窗口必看)**:
+> - pytest 用 `/d/anacoda3/python.exe -m pytest tests/ -q`(managed python 无 pytest)
+> - 改代码后重启容器/uvicorn;8001 被旧进程占用先 `Stop-Process` 杀掉
+> - GitHub push 走 443 通道(core.sshCommand 已配,免密);报 access rights 先查 ~/.ssh/config
+> - 前端单测盲区:URL 拼接类 bug 只有 `python scripts/e2e_flow.py`(系统 Edge)能抓
+
 - **0.0 决策标准(v2.1 定稿,2026-08-23)**:**拒绝"简历 ROI"决策标准**。一切取舍以"真实落地、真实用户、工程质量"为准——功能做不做看它对"同学能用、数据可信、系统可靠"的贡献,不看"面试能否加分"。简历是结果的叙事,不是决策的输入。历史文档中"部署无简历增量先不做""预算熔断/语义缓存=过度工程,简历够用"等表述**全部作废**,修订明细见第 17.1 节。
 - **我的需求(用户)**:要一个**写入简历的、真实落地的 AI Agent 项目**,不是玩具。业务场景:辅助学习编程与 AI 基础(我本人是 0 号用户,要学 Python/SQL/TypeScript/AI 基础)。必须有真实用户需求、真实效果评估、完整工程结构。**落地后可给同学用、可发网上给别人用(多用户)**。
 - **我有什么**:两个已完成项目——CourseRAG(垂直 RAG,993 块课程语料,检索能力)+ deep-research-agent(LangGraph 三节点 Agent 编排,91 测试全绿)。都是真实跑通、有评测、有 Docker 的。FeynmanTutor 站在它们肩膀上,不重复造轮子。
